@@ -30,7 +30,7 @@ def run_auto_trade():
     summary = {"sold": [], "bought": [], "errors": []}
     account = trading.get_account()
 
-    # ---- 1. 止盈止损检查 ----
+    # ---- 1. 止盈止损 + 缠论卖点检查 ----
     positions = trading.get_positions()
     if positions:
         codes = []
@@ -38,8 +38,21 @@ def run_auto_trade():
             pre = "sh" if p["symbol"].startswith(("6", "9", "5")) else "sz"
             codes.append(pre + p["symbol"])
         rt = fetch_realtime(codes) or []
-        price_map = {r["code"]: r["price"] for r in rt if "code" in r}
-        # 止盈止损触发
+        # 双key：{ 纯代码: price, 带前缀代码: price }，避免止盈/卖点两处查找格式不一致
+        price_map = {}
+        for r in rt:
+            if not r.get("price"):
+                continue
+            price_map[r.get("code", "")] = r["price"]                 # 纯6位代码
+            if r.get("prefix"):
+                price_map[r["prefix"]] = r["price"]                   # sh/sz+代码 前缀
+        # 纯 symbol 也建一份，方便持仓直接按 symbol 查
+        for r in rt:
+            if not r.get("price") or not r.get("code"):
+                continue
+            price_map[r["code"]] = r["price"]
+
+        # 1a) 止盈止损触发（按纯6位symbol查找）
         signals = trading.check_stop_loss_take_profit(price_map)
         for sig in signals:
             r = trading.sell(sig["symbol"], sig["price"], reason=sig["reason"])
@@ -47,27 +60,29 @@ def run_auto_trade():
                 summary["sold"].append(f"{sig['symbol']}@{sig['price']:.2f}({sig['reason']})")
                 notifier.notify_trade("sell", sig["symbol"], "", sig["price"], 0, sig["reason"], r.get("pnl"))
 
-    # ---- 2. 缠论卖点检查（用实时价卖出，禁止用K线收盘价） ----
-    # 复用上面已获取的实时价
-    for p in positions:
-        try:
-            df = fetch_kline(p["symbol"], level="daily", count=120)
-            rec = full_recommendation(df, config.CHANLUN_PARAMS)
-            if rec.get("sell_points"):
-                sp = rec["sell_points"][0]
-                # 必须用实时价
-                pre = "sh" if p["symbol"].startswith(("6", "9", "5")) else "sz"
-                rt_p = price_map.get(pre + p["symbol"])
-                if not rt_p or rt_p <= 0:
-                    summary["errors"].append(f"{p['symbol']}无实时价，跳过卖点卖出")
-                    continue
-                r = trading.sell(p["symbol"], rt_p, reason=f"缠论{sp['type']}")
-                if r.get("ok"):
-                    summary["sold"].append(f"{p['symbol']}@{rt_p:.2f}(缠论{sp['type']})")
-                    notifier.notify_trade("sell", p["symbol"], p["name"], rt_p, p["shares"],
-                                          f"缠论{sp['type']}", r.get("pnl"))
-        except Exception as e:
-            summary["errors"].append(f"{p['symbol']}卖点检查失败: {e}")
+        # 1b) 缠论卖点检查（用实时价卖出，禁止用K线收盘价）
+        # 先把刚刚卖出的持仓剔除，避免重复卖出
+        sold_now = {s.split("@")[0] for s in summary["sold"]}
+        for p in positions:
+            if p["symbol"] in sold_now:
+                continue
+            try:
+                df = fetch_kline(p["symbol"], level="daily", count=120)
+                rec = full_recommendation(df, config.CHANLUN_PARAMS)
+                if rec.get("sell_points"):
+                    sp = rec["sell_points"][0]
+                    # 必须用实时价：直接按 symbol（6位纯代码）查 price_map
+                    rt_p = price_map.get(p["symbol"])
+                    if not rt_p or rt_p <= 0:
+                        summary["errors"].append(f"{p['symbol']}无实时价，跳过卖点卖出")
+                        continue
+                    r = trading.sell(p["symbol"], rt_p, reason=f"缠论{sp['type']}")
+                    if r.get("ok"):
+                        summary["sold"].append(f"{p['symbol']}@{rt_p:.2f}(缠论{sp['type']})")
+                        notifier.notify_trade("sell", p["symbol"], p["name"], rt_p, p["shares"],
+                                              f"缠论{sp['type']}", r.get("pnl"))
+            except Exception as e:
+                summary["errors"].append(f"{p['symbol']}卖点检查失败: {e}")
 
     # ---- 3. 自动买入 ----
     auto_mode = trading.get_setting("auto_mode", "off") == "on"

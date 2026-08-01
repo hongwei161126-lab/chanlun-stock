@@ -246,16 +246,23 @@ def account():
 
 @app.route("/api/positions", methods=["GET"])
 def positions():
-    # 获取最新价
+    # 获取持仓并批量取实时价（比单根K线更准确）
     pos = trading.get_positions()
-    symbols = [p["symbol"] for p in pos]
     prices = {}
-    for s in symbols:
+    if pos:
+        codes = [("sh" if s["symbol"].startswith(("6", "9", "5")) else "sz") + s["symbol"] for s in pos]
         try:
-            df = fetch_kline(s, level="daily", count=1)
-            prices[s] = float(df["close"].iloc[-1])
+            rt = data_fetcher.fetch_realtime(codes) or []
+            for r in rt:
+                sym = r.get("code")
+                if sym and r.get("price", 0) > 0:
+                    prices[sym] = r["price"]
         except Exception:
-            prices[s] = pos[[p["symbol"] for p in pos].index(s)]["avg_cost"]
+            pass
+        # 对取不到实时价的，fallback到持仓成本价
+        for p in pos:
+            if p["symbol"] not in prices:
+                prices[p["symbol"]] = p["avg_cost"]
     pos = trading.get_positions(prices)
     return jsonify(pos)
 

@@ -263,6 +263,43 @@ def _macd_area(df, bi):
     return float(np.abs(seg["macd"].values).sum())
 
 
+def check_divergence_up(df, bi_list, lookback=2):
+    """
+    判断最近一段向上笔是否对前一段向上笔构成背驰（上涨背驰，用于第一类卖点）。
+    背驰定义：同向趋势中，后一段走势力度 < 前一段。
+    力度用 MACD 红绿柱面积近似。
+    返回 (is_divergence, detail)
+    """
+    if len(bi_list) < 3:
+        return False, {"reason": "笔数不足"}
+    # 找最近的向上笔
+    up_bi = [b for b in bi_list if b["direction"] == "up"]
+    if len(up_bi) < 2:
+        return False, {"reason": "向上笔不足2段"}
+    recent = up_bi[-lookback:] if len(up_bi) >= lookback else up_bi
+    if len(recent) < 2:
+        return False, {"reason": "可对比向上笔不足"}
+    prev_u, curr_u = recent[-2], recent[-1]
+    # 价格创新高（上涨趋势延续）
+    price_higher = curr_u["end_value"] > prev_u["end_value"]
+    if not price_higher:
+        return False, {"reason": "价格未创新高，非上涨背驰结构"}
+    try:
+        prev_area = _macd_area(df, prev_u)
+        curr_area = _macd_area(df, curr_u)
+    except Exception:
+        return False, {"reason": "MACD计算异常"}
+    # 上涨背驰：价格新高但力度（面积）减小
+    is_div = curr_area < prev_area and curr_area > 0
+    return is_div, {
+        "prev_high": prev_u["end_value"],
+        "curr_high": curr_u["end_value"],
+        "prev_area": round(prev_area, 4),
+        "curr_area": round(curr_area, 4),
+        "price_higher": price_higher,
+    }
+
+
 # ============================================================
 # 6. 完整解析入口
 # ============================================================

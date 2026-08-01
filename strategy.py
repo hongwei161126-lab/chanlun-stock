@@ -236,22 +236,37 @@ def detect_sell_points(analysis, params):
     results = []
     bi = analysis["bi"]
     zhongshu = analysis["zhongshu"]
-    is_div = analysis["divergence"]
-    div_detail = analysis["divergence_detail"]
+    macd_df = analysis.get("macd_df")
+    last_price = analysis["last_price"]
+
+    # 用上涨背驰（非下跌背驰）判断一卖
+    is_up_div, up_div_detail = False, {}
+    if macd_df is not None and bi is not None:
+        lb = params.get("divergence_lookback", 2)
+        is_up_div, up_div_detail = chanlun.check_divergence_up(macd_df, bi, lookback=lb)
+
+    # 上涨背驰强度（面积比，越小越强势）
+    up_div_ratio = 1.0
+    if isinstance(up_div_detail, dict) and up_div_detail.get("prev_area", 0) > 0:
+        up_div_ratio = up_div_detail["curr_area"] / up_div_detail["prev_area"]
 
     # ---- 第一类卖点：上涨背驰转折 ----
-    if is_div and bi:
+    # 严格条件：强上涨背驰(面积比<0.6) + 至少2个中枢(上涨走势完成) + 价在中枢上方
+    if is_up_div and bi and up_div_ratio < 0.6:
         last_bi = bi[-1]
         if last_bi["direction"] == "up":
             above_zhongshu = True
             if zhongshu:
                 last_zs = zhongshu[-1]
                 above_zhongshu = last_bi["end_value"] > last_zs["ZG"]
-            results.append({
-                "type": "第一类卖点",
-                "price": last_bi["end_value"],
-                "detail": f"上涨背驰转折，{div_detail}",
-            })
+            has_trend = len(zhongshu) >= 2
+            if above_zhongshu and has_trend:
+                results.append({
+                    "type": "第一类卖点",
+                    "price": last_bi["end_value"],
+                    "detail": (f"强上涨背驰(力度比{up_div_ratio:.0%})，{len(zhongshu)}中枢上涨走势完成，"
+                               f"前高{up_div_detail.get('prev_high','-'):.2f}→现高{up_div_detail.get('curr_high','-'):.2f}"),
+                })
 
     # ---- 第二类卖点：一卖后首次反弹高点 ----
     if bi and len(bi) >= 3:
