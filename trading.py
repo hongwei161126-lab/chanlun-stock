@@ -14,7 +14,7 @@ import json
 import time
 from datetime import datetime
 
-DB_PATH = "trading.db"
+DB_PATH = os.environ.get("DB_PATH", "trading.db")
 # 初始虚拟资金
 INITIAL_CAPITAL = 100000.0
 
