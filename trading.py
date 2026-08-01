@@ -12,9 +12,18 @@ import os
 import sqlite3
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 DB_PATH = os.environ.get("DB_PATH", "trading.db")
+# 北京时间（服务器可能在UTC时区，交易记录统一用北京时间）
+_BJ_TZ = timezone(timedelta(hours=8))
+
+
+def _now():
+    """返回北京时间的当前时间，避免服务器时区差异"""
+    return datetime.now(_BJ_TZ)
+
+
 # 初始虚拟资金
 INITIAL_CAPITAL = 100000.0
 
@@ -103,7 +112,7 @@ def init_db():
         row = c.execute("SELECT * FROM account WHERE id=1").fetchone()
         if not row:
             c.execute("INSERT INTO account(id,balance,initial,updated_at) VALUES(1,?,?,?)",
-                      (INITIAL_CAPITAL, INITIAL_CAPITAL, datetime.now().isoformat()))
+                      (INITIAL_CAPITAL, INITIAL_CAPITAL, _now().isoformat()))
         # 默认设置
         row = c.execute("SELECT * FROM settings WHERE key='auto_mode'").fetchone()
         if not row:
@@ -284,7 +293,7 @@ def buy(symbol, name, price, shares, strategy="手动", mode="manual",
     amount = price * shares
     fee, fee_detail = _calc_fee(amount, "buy", symbol)
     total_cost = amount + fee  # 实际扣款=成交金额+佣金
-    created = datetime.now().isoformat()
+    created = _now().isoformat()
     with _conn() as c:
         acct = c.execute("SELECT balance FROM account WHERE id=1").fetchone()
         if acct["balance"] < total_cost:
@@ -327,7 +336,7 @@ def sell(symbol, price, shares=None, reason=""):
         fee, fee_detail = _calc_fee(amount, "sell", symbol)
         net_amount = amount - fee  # 实际到账=成交金额-佣金-印花税-过户费
         pnl = net_amount - pos["avg_cost"] * sell_shares  # 净盈亏扣除费用
-        created = datetime.now().isoformat()
+        created = _now().isoformat()
         # 继承持仓的策略周期（长期/短期）
         term = pos["strategy_term"] if "strategy_term" in pos.keys() else "long"
         new_shares = pos["shares"] - sell_shares
@@ -416,7 +425,7 @@ def get_watchlist():
 def add_watch(symbol, name=""):
     with _conn() as c:
         c.execute("INSERT OR REPLACE INTO watchlist(symbol,name,added_at) VALUES(?,?,?)",
-                  (symbol, name, datetime.now().isoformat()))
+                  (symbol, name, _now().isoformat()))
         c.commit()
     return {"ok": True}
 
@@ -436,7 +445,7 @@ def reset_all(capital=INITIAL_CAPITAL):
         c.execute("DELETE FROM watchlist")
         c.execute("DELETE FROM settings WHERE key != 'auto_mode'")
         c.execute("UPDATE account SET balance=?, initial=?, updated_at=? WHERE id=1",
-                  (capital, capital, datetime.now().isoformat()))
+                  (capital, capital, _now().isoformat()))
         c.commit()
     return {"ok": True, "msg": f"已清空所有数据，资金重置为{capital:.0f}"}
 

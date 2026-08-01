@@ -7,7 +7,7 @@
 alwaysdata 部署时随 gunicorn worker 启动。
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -15,6 +15,9 @@ import scanner
 import auto_trade
 import notifier
 import trading
+
+# 北京时间（服务器可能在UTC时区，统一用北京时间判断交易日）
+_BJ_TZ = timezone(timedelta(hours=8))
 
 _logger = logging.getLogger("scheduler")
 _scheduler = None
@@ -25,8 +28,9 @@ def is_trading_day():
     判断今天是否为A股交易日（排除周末）。
     注：法定节假日需要接入交易日历，这里先排除周末；
     扫描任务设在16:00，闭市后执行不影响数据。
+    使用北京时间，避免服务器时区差异导致判断错误。
     """
-    today = datetime.now()
+    today = datetime.now(_BJ_TZ)
     # weekday(): 周一0...周日6
     return today.weekday() < 5
 
