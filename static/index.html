@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>缠论股票</title>
+<link rel="stylesheet" href="style.css?v=11">
+</head>
+<body>
+
+<!-- 顶部标题 -->
+<div class="header">
+  <div class="logo">
+    <span class="dot"></span>
+    <h1 id="pageTitle">行情</h1>
+  </div>
+  <span class="sub" id="pageSub">CLStock</span>
+</div>
+
+<!-- 主内容 -->
+<div class="main">
+
+  <!-- 行情页 -->
+  <div class="page active" id="page-market">
+    <!-- 大盘实时看板 -->
+    <div id="indexBoard" style="padding:8px 12px 0"></div>
+    <div class="search">
+      <input id="searchInput" placeholder="输入6位代码添加自选，如600519">
+      <button class="btn" onclick="addWatch()">添加</button>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>我的自选</span><span class="sub" id="watchCount"></span></div>
+      <div id="watchList"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>推荐股票池</span><span class="sub" id="poolSub">缠论扫描</span></div>
+      <div id="scanBox" class="scan-box">
+        <button class="btn scan-btn" onclick="startScan()">全市场扫描</button>
+        <div id="scanProgress" class="scan-progress" style="display:none">
+          <div class="sp-bar"><div class="sp-fill" id="spFill"></div></div>
+          <div class="sp-txt" id="spTxt">准备中...</div>
+        </div>
+      </div>
+      <div id="poolList"></div>
+    </div>
+  </div>
+
+  <!-- 详情/分析页 -->
+  <div class="page" id="page-detail">
+    <div class="stock-head">
+      <div class="nm" id="dName">--</div>
+      <div class="pr" id="dPrice">--</div>
+      <div class="chg-row" id="dChg">--</div>
+    </div>
+    <div class="chart-tools">
+      <div class="seg" id="levelSeg">
+        <span data-lv="minute">分时</span>
+        <span data-lv="daily" class="on">日线</span>
+        <span data-lv="30min">30分</span>
+        <span data-lv="60min">60分</span>
+      </div>
+      <div class="seg" id="chartTypeSeg">
+        <span id="toggleZS" class="on">中枢</span>
+        <span id="toggleBI">笔</span>
+      </div>
+    </div>
+    <div style="padding:0 12px"><canvas class="kchart" id="kcanvas"></canvas></div>
+    <div class="card" style="margin-top:10px">
+      <div class="card-title"><span>缠论分析</span></div>
+      <div id="analysisInfo"></div>
+    </div>
+    <div id="detailRec"></div>
+    <div id="tradePanel"></div>
+  </div>
+
+  <!-- 持仓页 -->
+  <div class="page" id="page-positions">
+    <div class="stat-grid">
+      <div class="stat-card"><div class="lb">总资产</div><div class="vl" id="totalAssets">--</div></div>
+      <div class="stat-card"><div class="lb">总盈亏</div><div class="vl" id="totalPnl">--</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>持仓</span></div>
+      <div id="posList"></div>
+    </div>
+  </div>
+
+  <!-- 我的/统计页 -->
+  <div class="page" id="page-mine">
+    <div class="stat-grid">
+      <div class="stat-card"><div class="lb">胜率</div><div class="vl" id="winRate">--</div></div>
+      <div class="stat-card"><div class="lb">交易次数</div><div class="vl" id="tradeCount">--</div></div>
+      <div class="stat-card"><div class="lb">已实现盈亏</div><div class="vl" id="realizedPnl">--</div></div>
+      <div class="stat-card"><div class="lb">可用资金</div><div class="vl" id="balance">--</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>策略对比（长期/短期）</span></div>
+      <div id="termCompare"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>策略设置</span></div>
+      <div class="trade-panel" style="margin-top:0">
+        <div class="row">
+          <label>自动模式</label>
+          <select id="autoMode" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+            <option value="off">关闭(半自动)</option>
+            <option value="on">开启(全自动)</option>
+          </select>
+        </div>
+        <div class="cl-rule">
+          <div class="cl-rule-title">缠论止盈止损原则</div>
+          <div class="cl-rule-sub">买点失效即止损，出现对应卖点即止盈（非固定百分比）</div>
+          <div class="cl-rule-item"><span class="k">一买</span><span class="v">止损=跌破买点(背驰失效)；止盈=中枢ZG或出现一卖</span></div>
+          <div class="cl-rule-item"><span class="k">二买</span><span class="v">止损=跌破一买低点；止盈=中枢ZG上方或出现二卖</span></div>
+          <div class="cl-rule-item"><span class="k">三买</span><span class="v">止损=跌破中枢ZG(突破失败)；止盈=ZG+中枢高度或出现三卖</span></div>
+        </div>
+        <div class="acts"><button class="btn" onclick="saveSettings()">保存设置</button></div>
+        <div class="acts"><button class="btn success" onclick="runAuto()">立即执行自动策略</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>推送配置</span></div>
+      <div class="trade-panel" style="margin-top:0">
+        <div class="row">
+          <label>邮件推送</label>
+          <select id="emailEnabled" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+            <option value="off">关闭</option>
+            <option value="on">开启</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>SMTP服务器</label>
+          <input type="text" id="smtpHost" placeholder="smtp.qq.com" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>SMTP端口</label>
+          <input type="number" id="smtpPort" value="465" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>邮箱账号</label>
+          <input type="text" id="smtpUser" placeholder="your@qq.com" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>邮箱密码</label>
+          <input type="password" id="smtpPass" placeholder="授权码" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>收件邮箱</label>
+          <input type="text" id="emailTo" placeholder="recipient@email.com" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>Server酱推送</label>
+          <select id="sctEnabled" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+            <option value="off">关闭</option>
+            <option value="on">开启</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>SCT Key</label>
+          <input type="text" id="sctKey" placeholder="Server酱密钥" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="acts"><button class="btn" onclick="saveNotifyConfig()">保存推送配置</button></div>
+        <div class="acts"><button class="btn success" onclick="testNotify()">测试推送</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>自动交易配置</span><span class="sub" id="schedulerInfo"></span></div>
+      <div class="trade-panel" style="margin-top:0">
+        <div class="row">
+          <label>自动交易模式</label>
+          <select id="autoModeConfig" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+            <option value="off">关闭(只扫描+推送)</option>
+            <option value="on">开启(自动买卖)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>买入评分阈值</label>
+          <input type="number" id="buyScore" value="70" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>最大持仓数</label>
+          <input type="number" id="maxPositions" value="5" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="row">
+          <label>单只仓位占比</label>
+          <input type="number" id="buyRatio" value="0.18" step="0.01" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--txt);padding:8px;border-radius:6px">
+        </div>
+        <div class="acts"><button class="btn" onclick="saveAutoConfig()">保存自动交易配置</button></div>
+        <div class="acts"><button class="btn success" onclick="triggerScan()">手动触发扫描+交易</button></div>
+        <div class="acts"><button class="btn" onclick="loadSchedulerJobs()">查看定时任务状态</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>交易历史</span></div>
+      <div id="tradeHistory"></div>
+      <div class="acts" style="margin-top:10px"><button class="btn danger" onclick="resetData()">清空所有数据(重置10万)</button></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- 弹窗：指数详情 -->
+<div class="modal" id="indexModal" onclick="if(event.target===this)closeModal('indexModal')">
+  <div class="modal-box">
+    <div class="modal-head"><span id="indexModalTitle">指数详情</span><span class="modal-close" onclick="closeModal('indexModal')">✕</span></div>
+    <canvas class="kchart" id="indexCanvas" style="height:220px"></canvas>
+    <div id="indexModalInfo"></div>
+  </div>
+</div>
+
+<!-- 弹窗：交易明细 -->
+<div class="modal" id="tradesModal" onclick="if(event.target===this)closeModal('tradesModal')">
+  <div class="modal-box">
+    <div class="modal-head"><span id="tradesModalTitle">交易明细</span><span class="modal-close" onclick="closeModal('tradesModal')">✕</span></div>
+    <div id="tradesModalBody"></div>
+  </div>
+</div>
+
+<!-- 底部Tab -->
+<div class="tabs">
+  <div class="tab active" data-page="market" onclick="switchTab('market')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>
+    行情
+  </div>
+  <div class="tab" data-page="detail" onclick="switchTab('detail')" style="display:none"></div>
+  <div class="tab" data-page="positions" onclick="switchTab('positions')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18v13H3z"/><path d="M3 7l2-3h14l2 3"/><path d="M8 12h8"/></svg>
+    持仓
+  </div>
+  <div class="tab" data-page="mine" onclick="switchTab('mine')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6"/><rect x="13" y="7" width="3" height="10"/></svg>
+    我的
+  </div>
+</div>
+
+<script src="app.js?v=11"></script>
+</body>
+</html>
