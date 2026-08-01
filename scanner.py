@@ -120,16 +120,21 @@ def _calc_score(buy_points, analysis):
 
 
 def _scan_one(stock, params):
-    """扫描单只股票，返回命中信息或None"""
+    """
+    扫描单只股票
+    Returns:
+        (hit_dict, error_flag) 或 (None, 0)
+        hit_dict: 命中时返回推荐对象；error_flag: 0=成功(有无信号均可)，1=异常(网络/解析失败)
+    """
     symbol = stock["symbol"]
     name = stock["name"]
     try:
         df = fetch_kline(symbol, level="daily", count=SCAN_KLINE_COUNT)
         if len(df) < 30:
-            return None
+            return None, 0  # 数据不足，非错误
         analysis, buy_points = analyze_stock(df, params)
         if not buy_points:
-            return None
+            return None, 0  # 无买点，非错误
         price = round(float(df["close"].iloc[-1]), 3)
         types = [b["type"] for b in buy_points]
         # 综合评分
@@ -155,9 +160,10 @@ def _scan_one(stock, params):
             "score": score,
             "score_detail": score_detail,
             "detail": detail,
-        }
+        }, 0
     except Exception:
-        return None
+        # 数据获取/解析异常，错误计数+1
+        return None, 1
 
 
 def start_scan():
@@ -197,19 +203,21 @@ def _scan_worker():
 
     def _done(future):
         nonlocal scanned, errors
-        result = future.result()
+        try:
+            result, err = future.result()
+        except Exception:
+            result, err = None, 1  # future自身异常(如取消)也计为错误
         scanned += 1
-        if result is None:
-            # 无法区分是无信号还是出错，统一计入已扫描
-            pass
-        else:
+        errors += err
+        if result is not None:
             with hit_lock:
                 hits.append(result)
         with _state_lock:
             _state["scanned"] = scanned
             _state["hits"] = len(hits)
+            _state["errors"] = errors
             if scanned % 50 == 0:
-                _state["msg"] = f"已扫描 {scanned}/{total}，命中 {len(hits)}"
+                _state["msg"] = f"已扫描 {scanned}/{total}，命中 {len(hits)}，失败 {errors}"
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [ex.submit(_scan_one, s, params) for s in stocks]
@@ -227,5 +235,6 @@ def _scan_worker():
         _state.update({
             "status": "done",
             "finished_at": time.time(),
-            "msg": f"扫描完成：{total}只，命中{len(hits)}只",
+            "msg": f"扫描完成：{total}只，命中{len(hits)}只，失败{errors}只",
+            "errors": errors,
         })

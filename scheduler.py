@@ -35,13 +35,17 @@ def is_trading_day():
     return today.weekday() < 5
 
 
-def daily_scan_job():
-    """每日收盘后执行：扫描 → 自动交易 → 推送"""
-    # 闭市日（周末）不操作
-    if not is_trading_day():
+def daily_scan_job(force=False):
+    """
+    每日收盘后执行：扫描 → 自动交易 → 推送
+    Args:
+        force: True=手动触发时使用，跳过非交易日判断（周末也能验证功能）
+    """
+    # 闭市日（周末）不操作：仅Cron自动触发时拦截；force=True手动触发放行
+    if not force and not is_trading_day():
         _logger.info("[定时任务] 今天非交易日(周末)，跳过")
         return
-    _logger.info("[定时任务] 开始全市场扫描")
+    _logger.info(f"[{'手动' if force else '定时'}任务] 开始全市场扫描")
     ok, msg = scanner.start_scan()
     if not ok:
         _logger.info(f"[定时任务] 扫描未启动: {msg}")
@@ -95,11 +99,11 @@ def get_jobs():
 
 
 def trigger_now():
-    """手动触发一次定时任务（前端按钮调用）"""
-    # 手动触发也判断交易日
-    if not is_trading_day():
-        return {"ok": False, "msg": "今天非交易日(周末)，不执行自动交易。可手动在行情页操作。"}
+    """
+    手动触发一次扫描+自动交易（前端按钮调用）。
+    传force=True，跳过交易日拦截，周末/节假日也能验证功能。
+    """
     import threading
-    t = threading.Thread(target=daily_scan_job, daemon=True)
+    t = threading.Thread(target=daily_scan_job, args=(True,), daemon=True)
     t.start()
-    return {"ok": True, "msg": "已手动触发扫描+交易"}
+    return {"ok": True, "msg": "已触发扫描+自动交易，稍后在持仓/交易明细查看结果"}

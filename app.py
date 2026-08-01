@@ -354,48 +354,12 @@ def settings():
 @app.route("/api/auto/run", methods=["POST"])
 def auto_run():
     """
-    全自动模式：扫描持仓，触发止盈止损；
-    扫描自选股，触发买点自动买入。
-    返回本次执行的操作记录。
+    立即执行自动策略（与scheduler/trigger完全一致的逻辑）。
+    执行流程：后台线程 → 全市场扫描 → 等扫描完 → 检查卖点+止盈止损卖出 → 评分达标者自动买入。
+    周末/节假日也能执行（force=True），用于测试。
     """
-    actions = []
-    # 1. 检查持仓止盈止损
-    pos = trading.get_positions()
-    prices = {}
-    for p in pos:
-        try:
-            df = fetch_kline(p["symbol"], level="daily", count=1)
-            prices[p["symbol"]] = float(df["close"].iloc[-1])
-        except Exception:
-            pass
-    for sig in trading.check_stop_loss_take_profit(prices):
-        r = trading.sell(sig["symbol"], sig["price"], reason=sig["reason"])
-        actions.append({"action": "sell", "symbol": sig["symbol"], "result": r, "reason": sig["reason"]})
-    # 2. 扫描自选股买点（全自动模式）
-    if trading.get_setting("auto_mode") == "on":
-        watchlist = trading.get_watchlist()
-        acct = trading.get_account()
-        for w in watchlist:
-            symbol = w["symbol"]
-            try:
-                df = fetch_kline(symbol, level="daily", count=300)
-                rec = strategy.full_recommendation(df, config.CHANLUN_PARAMS)
-                if rec["buy_points"]:
-                    bp = rec["buy_points"][0]  # 取第一个买点
-                    price = bp["buy"]
-                    # 用账户资金的10%买入，100股起
-                    budget = acct["balance"] * 0.1
-                    shares = max(100, int(budget / price / 100) * 100)
-                    if shares * price <= acct["balance"]:
-                        r = trading.buy(symbol, _name(symbol), price, shares,
-                                        strategy_name=bp["buy_type"], mode="auto",
-                                        stop_loss=bp["stop_loss"], take_profit=bp["take_profit"],
-                                        reason=f"自动策略:{bp['detail']}",
-                                        strategy_term="long")
-                        actions.append({"action": "buy", "symbol": symbol, "result": r})
-            except Exception as e:
-                actions.append({"action": "error", "symbol": symbol, "result": {"ok": False, "msg": str(e)}})
-    return jsonify({"actions": actions, "count": len(actions)})
+    r = scheduler.trigger_now()
+    return jsonify(r)
 
 
 # ============================================================
