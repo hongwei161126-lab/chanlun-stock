@@ -28,7 +28,7 @@ _UA_POOL = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
 ]
-_TIMEOUT = 20
+_TIMEOUT = 8  # 降低超时，快速失败不拖慢扫描
 # 腾讯接口 session（直连）
 _SESSION = requests.Session()
 _SESSION.trust_env = False
@@ -39,8 +39,8 @@ _EM_SESSION.trust_env = False
 _EM_SESSION.headers.update({"Referer": "https://quote.eastmoney.com/"})
 # 每线程独立的最近请求时间，避免全局锁瓶颈
 _tls = threading.local()
-_TLS_GAP = 0.35  # 单线程基础间隔（秒）
-_TLS_JITTER = 0.18  # 随机抖动上限（秒），实际间隔 = _TLS_GAP + random*JITTER
+_TLS_GAP = 0.15  # 单线程基础间隔（秒），降低以加快扫描
+_TLS_JITTER = 0.10  # 随机抖动上限（秒）
 
 # 限流熔断：全局连续失败计数
 _breaker_lock = threading.Lock()
@@ -103,15 +103,18 @@ _QQ_MIN_TYPE = {"30min": "m30", "5min": "m5", "15min": "m15", "60min": "m60"}
 
 def fetch_kline(symbol, level="daily", count=300):
     """
-    获取K线数据（优先新浪，回退东方财富，再回退腾讯）。
+    获取K线数据（优先腾讯，回退东方财富）。
     symbol: 6位代码，如 "600519"
     level: "daily" | "30min" | "60min"
     count: 拉取根数
     返回 DataFrame(date, open, high, low, close)
     """
-    # 优先新浪（最稳定，反爬宽松）
+    # 优先腾讯（海外访问最稳定）
     try:
-        return _fetch_sina_kline(symbol, level, count)
+        if level in _QQ_DAILY_TYPE:
+            return _fetch_qq_daily(symbol, level, count)
+        elif level in _QQ_MIN_TYPE:
+            return _fetch_qq_min(symbol, level, count)
     except Exception:
         pass
     # 回退东方财富
@@ -119,12 +122,12 @@ def fetch_kline(symbol, level="daily", count=300):
         return _fetch_em_kline(symbol, level, count)
     except Exception:
         pass
-    # 最后回退腾讯
-    if level in _QQ_DAILY_TYPE:
-        return _fetch_qq_daily(symbol, level, count)
-    elif level in _QQ_MIN_TYPE:
-        return _fetch_qq_min(symbol, level, count)
-    raise ValueError(f"不支持的级别: {level}")
+    # 最后新浪
+    try:
+        return _fetch_sina_kline(symbol, level, count)
+    except Exception:
+        pass
+    raise ValueError(f"所有数据源均失败: {symbol} {level}")
 
 
 # 新浪K线级别映射：scale（分钟数），日线=240
@@ -184,7 +187,7 @@ def _fetch_em_kline(symbol, level, count):
            f"secid={secid}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57"
            f"&klt={klt}&fqt=1&end=20500101&lmt={count}")
     last_err = None
-    for attempt in range(3):
+    for attempt in range(2):
         _check_breaker()
         _throttle()
         _apply_ua(_EM_SESSION)
@@ -193,7 +196,7 @@ def _fetch_em_kline(symbol, level, count):
             if r.status_code != 200:
                 _mark_fail(r.status_code)
                 last_err = f"HTTP {r.status_code}"
-                time.sleep(0.5 * (attempt + 1))  # 指数退避
+                time.sleep(0.3 * (attempt + 1))
                 continue
             klines = r.json().get("data", {}).get("klines", [])
             if not klines:
@@ -207,7 +210,7 @@ def _fetch_em_kline(symbol, level, count):
             return _to_df(rows, count)
         except Exception as e:
             last_err = str(e)
-            time.sleep(0.5 * (attempt + 1))
+            time.sleep(0.3 * (attempt + 1))
     raise RuntimeError(f"东方财富获取 {symbol} {level} 失败: {last_err}")
 
 
@@ -253,7 +256,7 @@ def _fetch_qq_min(symbol, level, count):
 def _request(url, symbol, level):
     """带反爬的 GET（UA轮换+抖动+熔断+指数退避重试）"""
     last_err = None
-    for attempt in range(3):
+    for attempt in range(2):
         _check_breaker()
         _throttle()
         _apply_ua(_SESSION)
@@ -262,13 +265,13 @@ def _request(url, symbol, level):
             if r.status_code != 200:
                 _mark_fail(r.status_code)
                 last_err = f"HTTP {r.status_code}"
-                time.sleep(0.5 * (attempt + 1))
+                time.sleep(0.3 * (attempt + 1))
                 continue
             _mark_success()
             return r.json()
         except Exception as e:
             last_err = str(e)
-            time.sleep(0.5 * (attempt + 1))
+            time.sleep(0.3 * (attempt + 1))
     raise RuntimeError(f"腾讯获取 {symbol} {level} 失败: {last_err}")
 
 

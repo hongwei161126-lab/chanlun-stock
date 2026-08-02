@@ -54,10 +54,10 @@ except Exception:
 
 # 缓存有效期（秒）：2小时
 CACHE_TTL = 7200
-# 扫描并发线程数（配合反爬策略，8线程+抖动间隔较安全）
-MAX_WORKERS = 8
+# 扫描并发线程数（海外服务器到国内延迟高，降低并发避免超时）
+MAX_WORKERS = 4
 # 每只扫描拉取的K线根数（日线）
-SCAN_KLINE_COUNT = 150
+SCAN_KLINE_COUNT = 120
 
 
 def get_status():
