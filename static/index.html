@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>缠论股票</title>
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
 
@@ -191,6 +191,19 @@
       </div>
     </div>
     <div class="card">
+      <div class="card-title"><span>账户安全</span></div>
+      <div class="trade-panel" style="margin-top:0">
+        <div class="row">
+          <label>访问密码</label>
+          <div style="flex:1;display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn sm" onclick="doShowChangePwd()">修改密码</button>
+            <button class="btn sm" style="background:var(--bg2)" onclick="doLogout()">退出登录</button>
+          </div>
+        </div>
+        <div class="lb" style="font-size:11px">登录有效期7天；忘记密码可通过SSH删除数据库auth_pwd_hash重置</div>
+      </div>
+    </div>
+    <div class="card">
       <div class="card-title"><span>交易历史</span></div>
       <div id="tradeHistory"></div>
       <div class="acts" style="margin-top:10px"><button class="btn danger" onclick="resetData()">清空所有数据(重置10万)</button></div>
@@ -201,6 +214,13 @@
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+
+<!-- 登录/设密码遮罩 -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card">
+    <div class="auth-body" id="authForm"></div>
+  </div>
+</div>
 
 <!-- 弹窗：指数详情 -->
 <div class="modal" id="indexModal" onclick="if(event.target===this)closeModal('indexModal')">
@@ -236,6 +256,6 @@
   </div>
 </div>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

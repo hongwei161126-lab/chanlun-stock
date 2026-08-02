@@ -366,3 +366,58 @@ body{
 .signal-tag.none{ background:rgba(125,139,161,.1); color:var(--txt3); }
 
 @media(prefers-reduced-motion:reduce){ *,*::before,*::after{ animation:none !important; transition:none !important; } }
+
+/* ============ 登录 / 设密码遮罩 ============ */
+.auth-overlay{
+  display:none; position:fixed; inset:0; z-index:2000;
+  background:radial-gradient(circle at 50% 30%,rgba(6,182,212,.08),transparent 60%),rgba(10,14,23,.92);
+  align-items:center; justify-content:center; padding:24px;
+  backdrop-filter:blur(6px);
+}
+.auth-overlay.show{ display:flex; animation:authFade .25s ease; }
+@keyframes authFade{ from{ opacity:0; } to{ opacity:1; } }
+.auth-card{
+  width:100%; max-width:360px;
+  background:linear-gradient(180deg,var(--card) 0%,var(--bg2) 100%);
+  border:1px solid var(--border); border-radius:16px;
+  box-shadow:0 24px 80px rgba(0,0,0,.5),0 0 0 1px rgba(6,182,212,.08);
+  overflow:hidden; position:relative;
+}
+.auth-card::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+}
+.auth-body{ padding:28px 24px 24px; }
+
+.auth-title{ text-align:center; margin-bottom:22px; }
+.auth-logo{
+  display:inline-flex; align-items:center; gap:8px;
+  font-size:19px; font-weight:800; letter-spacing:.3px;
+}
+.auth-logo .dot{ width:8px; height:8px; border-radius:2px; background:var(--accent); box-shadow:0 0 10px var(--accent); }
+.auth-sub{ font-size:12px; color:var(--txt2); margin-top:8px; line-height:1.5; }
+
+.auth-row{ margin-bottom:14px; }
+.auth-row label{
+  display:block; font-size:11px; color:var(--txt2);
+  margin-bottom:6px; letter-spacing:.5px; text-transform:uppercase; font-weight:500;
+}
+.auth-row input{
+  width:100%; background:var(--bg); border:1px solid var(--border); border-radius:10px;
+  padding:12px 14px; color:var(--txt); font-size:14px; outline:none;
+  font-family:var(--mono); letter-spacing:1px; transition:.2s;
+}
+.auth-row input::placeholder{ color:var(--txt3); letter-spacing:normal; }
+.auth-row input:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-bg);
+}
+
+.auth-btn{
+  width:100%; padding:13px; font-size:14px;
+  margin-top:6px; letter-spacing:1px;
+}
+.auth-tip{
+  margin-top:14px; text-align:center; font-size:11px; color:var(--txt3);
+}
+.auth-tip a{ text-decoration:none; }

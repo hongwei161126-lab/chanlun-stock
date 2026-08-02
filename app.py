@@ -13,10 +13,33 @@ import trading
 import scanner
 import notifier
 import scheduler
+import auth
 from chanlun import analyze as chanlun_analyze
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
+
+# ============================================================
+# 全局鉴权中间件：所有 /api/* 请求（除 /api/auth/* 和 未设密码时）都要token
+# ============================================================
+@app.before_request
+def _auth_middleware():
+    path = request.path
+    if not path.startswith("/api/"):
+        return  # 静态资源不鉴权
+    # 未设置密码 -> 放行（首次使用）
+    if not auth.is_password_set():
+        return
+    # /api/auth/* 接口本身不鉴权
+    if path.startswith("/api/auth/"):
+        return
+    header = request.headers.get("Authorization", "")
+    tok = header[7:].strip() if header.startswith("Bearer ") else ""
+    if not tok:
+        tok = request.args.get("token", "")
+    if not auth._valid_token(tok):
+        return jsonify({"error": "未登录或登录已过期，请重新登录", "need_login": True}), 401
+
 
 # 简单股票名称映射（实际可从接口获取）
 NAME_MAP = {
@@ -38,6 +61,61 @@ def _name(symbol):
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+# ============================================================
+# 登录鉴权 API（/api/auth/* 不被中间件拦截）
+# ============================================================
+@app.route("/api/auth/state", methods=["GET"])
+def auth_state():
+    """返回当前鉴权状态：是否已设密码、调用方是否已登录（通过token有效性判断）"""
+    pwd_set = auth.is_password_set()
+    logged_in = False
+    if pwd_set:
+        header = request.headers.get("Authorization", "")
+        tok = header[7:].strip() if header.startswith("Bearer ") else request.args.get("token", "")
+        logged_in = auth._valid_token(tok)
+    return jsonify({"password_set": pwd_set, "logged_in": logged_in})
+
+
+@app.route("/api/auth/set-password", methods=["POST"])
+def auth_set_password():
+    """首次使用或修改密码"""
+    data = request.json or {}
+    pwd = (data.get("password") or "").strip()
+    old = (data.get("old_password") or "").strip()
+    try:
+        if auth.is_password_set():
+            # 改密码需要旧密码验证
+            if not auth.check_password(old):
+                return jsonify({"ok": False, "msg": "旧密码错误"}), 401
+            auth.set_password(pwd)
+        else:
+            # 首次设置，无需旧密码
+            auth.set_password(pwd)
+        return jsonify({"ok": True, "msg": "密码设置成功"})
+    except ValueError as e:
+        return jsonify({"ok": False, "msg": str(e)}), 400
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    """密码登录，成功返回7天有效token"""
+    data = request.json or {}
+    pwd = (data.get("password") or "").strip()
+    if not auth.is_password_set():
+        return jsonify({"ok": False, "msg": "请先设置密码"}), 400
+    if not auth.check_password(pwd):
+        return jsonify({"ok": False, "msg": "密码错误"}), 401
+    tok = auth.issue_token()
+    return jsonify({"ok": True, "token": tok, "ttl_days": 7})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    """退出登录（token失效）"""
+    auth.revoke_token()
+    return jsonify({"ok": True, "msg": "已退出登录"})
 
 
 # ============================================================
@@ -252,7 +330,7 @@ def positions():
     if pos:
         codes = [("sh" if s["symbol"].startswith(("6", "9", "5")) else "sz") + s["symbol"] for s in pos]
         try:
-            rt = data_fetcher.fetch_realtime(codes) or []
+            rt = fetch_realtime(codes) or []
             for r in rt:
                 sym = r.get("code")
                 if sym and r.get("price", 0) > 0:
@@ -357,9 +435,16 @@ def auto_run():
     立即执行自动策略（与scheduler/trigger完全一致的逻辑）。
     执行流程：后台线程 → 全市场扫描 → 等扫描完 → 检查卖点+止盈止损卖出 → 评分达标者自动买入。
     周末/节假日也能执行（force=True），用于测试。
+    返回兼容前端期望的 count 字段。
     """
     r = scheduler.trigger_now()
-    return jsonify(r)
+    return jsonify({
+        "ok": r.get("ok", True),
+        "msg": r.get("msg", ""),
+        # 后台异步执行，前端改看"msg"提示扫描中/稍后查看
+        "count": 0,
+        "async": True,
+    })
 
 
 # ============================================================

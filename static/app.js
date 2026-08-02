@@ -1,8 +1,117 @@
 // 缠论股票APP 前端逻辑
 const API = '';
+const TOKEN_KEY = 'clstock_token_v1';
 let curSymbol = null, curName = null, curLevel = 'daily';
 let chartData = null, showZS = true, showBI = false;
 let refreshTimer = null;  // 实时刷新定时器
+let g_auth_state = { password_set: false, logged_in: false };
+
+// ============ 鉴权工具 ============
+function getToken(){ return localStorage.getItem(TOKEN_KEY) || ''; }
+function setToken(t){
+  if(t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+function showLogin(){
+  // 显示登录/设密码遮罩
+  document.getElementById('authOverlay').classList.add('show');
+  document.getElementById('authForm').innerHTML = '<div style="text-align:center;color:var(--txt2);padding:10px">加载中...</div>';
+  _render_auth();
+}
+function hideLogin(){
+  document.getElementById('authOverlay').classList.remove('show');
+}
+async function _render_auth(){
+  const s = await fetch(API+'/api/auth/state').then(r=>r.json()).catch(()=>({password_set:false,logged_in:false}));
+  g_auth_state = s;
+  const el = document.getElementById('authForm');
+  if(!s.password_set){
+    // 首次使用：设置密码
+    el.innerHTML = `
+    <div class="auth-title">
+      <div class="auth-logo"><span class="dot"></span>缠论股票</div>
+      <div class="auth-sub">首次使用，请设置访问密码（至少4位）</div>
+    </div>
+    <div class="auth-row">
+      <label>设置密码</label>
+      <input type="password" id="setPwd1" placeholder="至少4位字符" autocomplete="new-password">
+    </div>
+    <div class="auth-row">
+      <label>确认密码</label>
+      <input type="password" id="setPwd2" placeholder="再输一次">
+    </div>
+    <button class="btn success auth-btn" onclick="doSetPwd()">设置密码并进入</button>`;
+    setTimeout(()=>{ const p=document.getElementById('setPwd1'); if(p) p.focus(); },50);
+  }else if(!s.logged_in){
+    // 已设密码，需登录
+    el.innerHTML = `
+    <div class="auth-title">
+      <div class="auth-logo"><span class="dot"></span>缠论股票</div>
+      <div class="auth-sub">请输入访问密码登录（7天免登录）</div>
+    </div>
+    <div class="auth-row">
+      <label>访问密码</label>
+      <input type="password" id="loginPwd" placeholder="请输入密码" autocomplete="current-password">
+    </div>
+    <button class="btn success auth-btn" onclick="doLogin()">登录</button>
+    <div class="auth-tip"><a href="javascript:doShowChangePwd()" style="color:var(--accent)">我忘记密码 / 修改密码</a></div>`;
+    setTimeout(()=>{ const p=document.getElementById('loginPwd'); if(p){ p.focus(); p.onkeydown=e=>{ if(e.key==='Enter') doLogin(); }; } },50);
+  }else{
+    // 已登录，隐藏
+    hideLogin();
+  }
+}
+async function doSetPwd(){
+  const p1 = document.getElementById('setPwd1').value;
+  const p2 = document.getElementById('setPwd2').value;
+  if(!p1 || p1.length<4){ toast('密码至少4位'); return; }
+  if(p1 !== p2){ toast('两次密码不一致'); return; }
+  const r = await fetch(API+'/api/auth/set-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p1})}).then(r=>r.json());
+  if(!r || !r.ok){ toast(r?.msg||'设置失败'); return; }
+  // 设完密码自动登录
+  const lr = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p1})}).then(r=>r.json());
+  if(lr && lr.ok){ setToken(lr.token); toast('设置成功，已登录'); hideLogin(); bootApp(); return; }
+  toast(r.msg || '设置成功，请登录'); _render_auth();
+}
+async function doLogin(){
+  const p = document.getElementById('loginPwd').value;
+  if(!p){ toast('请输入密码'); return; }
+  const r = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p})}).then(r=>r.json());
+  if(!r || !r.ok){ toast(r?.msg||'登录失败'); return; }
+  setToken(r.token);
+  toast('登录成功，7天免登录'); hideLogin(); bootApp();
+}
+function doShowChangePwd(){
+  const el = document.getElementById('authForm');
+  el.innerHTML = `
+  <div class="auth-title">
+    <div class="auth-logo"><span class="dot"></span>缠论股票</div>
+    <div class="auth-sub">重置密码：请输入旧密码+新密码<br>（如果忘记旧密码，可SSH登录数据库清空settings表中auth开头的key）</div>
+  </div>
+  <div class="auth-row"><label>旧密码</label><input type="password" id="chgOld"></div>
+  <div class="auth-row"><label>新密码</label><input type="password" id="chgP1"></div>
+  <div class="auth-row"><label>确认新密码</label><input type="password" id="chgP2"></div>
+  <button class="btn success auth-btn" onclick="doChangePwd()">提交修改</button>
+  <div class="auth-tip"><a href="javascript:_render_auth()" style="color:var(--accent)">← 返回登录</a></div>`;
+}
+async function doChangePwd(){
+  const old = document.getElementById('chgOld').value;
+  const p1 = document.getElementById('chgP1').value;
+  const p2 = document.getElementById('chgP2').value;
+  if(p1 && p1.length<4){ toast('新密码至少4位'); return; }
+  if(p1 !== p2){ toast('两次新密码不一致'); return; }
+  const r = await fetch(API+'/api/auth/set-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_password:old,password:p1})}).then(r=>r.json());
+  if(!r || !r.ok){ toast(r?.msg||'修改失败'); return; }
+  toast('密码已修改，请用新密码重新登录');
+  setToken(''); // 旧token自动失效
+  setTimeout(_render_auth, 800);
+}
+async function doLogout(){
+  try{ await fetch(API+'/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+getToken()}}); }catch(e){}
+  setToken('');
+  toast('已退出登录');
+  showLogin();
+}
 
 // ============ 工具函数 ============
 function toast(msg){
@@ -11,8 +120,16 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 2000);
 }
 async function api(path, opt){
+  opt = opt || {};
+  opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers||{});
+  const tok = getToken();
+  if(tok) opt.headers['Authorization'] = 'Bearer ' + tok;
   try{
-    const r = await fetch(API+path, opt||{});
+    const r = await fetch(API+path, opt);
+    if(r.status === 401){
+      try{ const d = await r.json(); if(d && d.need_login){ setToken(''); showLogin(); return null; } }catch(e){}
+      setToken(''); showLogin(); return null;
+    }
     const d = await r.json();
     if(d.error){ toast(d.error); return null; }
     return d;
@@ -676,11 +793,15 @@ async function openTradesDetail(term, action){
   document.getElementById('tradesModalBody').innerHTML = html;
 }
 async function runAuto(){
-  toast('执行中...');
+  toast('执行中，后台正在扫描（约需10分钟），稍后请查看持仓和交易明细...');
   const r = await api('/api/auto/run', {method:'POST'});
   if(r){
-    toast(`执行完成，共${r.count}项操作`);
-    loadMine(); loadPositions();
+    if(r && r.async){
+      toast(r.msg || '已触发，后台扫描+交易中（约10分钟），完成后持仓/明细页查看结果');
+    }else{
+      toast(`执行完成，共${r.count||0}项操作`);
+    }
+    setTimeout(()=>{ loadMine(); loadPositions(); }, 5000);
   }
 }
 
@@ -774,5 +895,29 @@ document.getElementById('toggleZS').addEventListener('click', e=>{ showZS=!showZ
 document.getElementById('toggleBI').addEventListener('click', e=>{ showBI=!showBI; e.target.classList.toggle('on',showBI); drawKline(); });
 document.getElementById('searchInput').addEventListener('keydown', e=>{ if(e.key==='Enter') addWatch(); });
 
-// 启动
-loadMarket();
+// 启动：先检查鉴权状态，已登录才加载行情；未登录弹出登录/设密码页
+function bootApp(){
+  // 如果本地有token，先走一次auth/state确认有效性（token可能在服务端被改密码失效）
+  loadMarket();
+}
+(async function init(){
+  try{
+    const tok = getToken();
+    const s = await fetch(API+'/api/auth/state'+(tok?'?token='+encodeURIComponent(tok):'')).then(r=>r.json()).catch(()=>({password_set:false,logged_in:false}));
+    g_auth_state = s;
+    if(!s.password_set){
+      // 首次使用，弹设密码页
+      showLogin();
+    }else if(!s.logged_in){
+      // 有密码但未登录
+      showLogin();
+    }else{
+      hideLogin();
+      bootApp();
+    }
+  }catch(e){
+    // 接口异常（服务器没启动等），还是先加载内容，等实际请求时再处理401
+    hideLogin();
+    bootApp();
+  }
+})();
