@@ -1,7 +1,10 @@
 """
 全市场缠论扫描器
 多线程并发扫描沪深A股日线买点，带进度跟踪和结果缓存。
+扫描结果持久化到文件，防止gunicorn worker重启导致缓存丢失。
 """
+import os
+import json
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +12,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import config
 from data_fetcher import fetch_kline, fetch_all_stocks
 from strategy import analyze_stock
+
+# 持久化缓存文件路径
+_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scan_cache.json")
 
 # 扫描状态
 _state_lock = threading.Lock()
@@ -29,6 +35,22 @@ _cache = {
     "hits": [],
     "updated_at": 0.0,
 }
+
+# 启动时从文件加载缓存
+try:
+    if os.path.exists(_CACHE_FILE):
+        with open(_CACHE_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+            _cache["hits"] = saved.get("hits", [])
+            _cache["updated_at"] = saved.get("updated_at", 0.0)
+        # 同步状态为done（worker重启后恢复）
+        with _state_lock:
+            _state["status"] = "done"
+            _state["hits"] = len(_cache["hits"])
+            _state["msg"] = f"从缓存恢复{len(_cache['hits'])}只命中"
+            _state["finished_at"] = _cache["updated_at"]
+except Exception:
+    pass
 
 # 缓存有效期（秒）：2小时
 CACHE_TTL = 7200
@@ -51,9 +73,19 @@ def get_status():
 def get_hits():
     """获取缓存的扫描命中结果（已按信号强度排序）"""
     with _cache_lock:
-        if not _cache["hits"]:
-            return []
-        return [dict(h) for h in _cache["hits"]]
+        if _cache["hits"]:
+            return [dict(h) for h in _cache["hits"]]
+    # 内存缓存为空，尝试从文件恢复
+    try:
+        if os.path.exists(_CACHE_FILE):
+            with open(_CACHE_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                hits = saved.get("hits", [])
+                if hits:
+                    return [dict(h) for h in hits]
+    except Exception:
+        pass
+    return []
 
 
 def is_scanning():
@@ -235,11 +267,16 @@ def _scan_worker():
 
     # 按综合评分降序排序（同分按代码升序）
     hits.sort(key=lambda x: (-x["score"], x["symbol"]))
-    # 补充实时涨跌幅（批量获取太慢，前端点击时再查）
 
     with _cache_lock:
         _cache["hits"] = hits
         _cache["updated_at"] = time.time()
+        # 持久化到文件，防止worker重启丢失
+        try:
+            with open(_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"hits": hits, "updated_at": _cache["updated_at"]}, f, ensure_ascii=False)
+        except Exception:
+            pass
     with _state_lock:
         _state.update({
             "status": "done",
