@@ -137,6 +137,14 @@ def _scan_one(stock, params):
             return None, 0  # 无买点，非错误
         price = round(float(df["close"].iloc[-1]), 3)
         types = [b["type"] for b in buy_points]
+        # 保存每个买点的历史买入价，用于后续现价合理性过滤
+        buy_point_prices = []  # [(type_name, buy_price), ...]
+        for b in buy_points:
+            try:
+                bp = round(float(b["price"]), 3)
+            except Exception:
+                continue
+            buy_point_prices.append((b["type"], bp))
         # 综合评分
         score, score_detail = _calc_score(buy_points, analysis)
         # 评级（兼容旧字段）：按分数分档
@@ -156,6 +164,7 @@ def _scan_one(stock, params):
             "name": name,
             "price": price,
             "buy_types": types,
+            "buy_point_prices": buy_point_prices,
             "grade": grade,
             "score": score,
             "score_detail": score_detail,

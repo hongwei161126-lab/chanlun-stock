@@ -55,6 +55,35 @@ def _name(symbol):
     return NAME_MAP.get(symbol, symbol)
 
 
+# 买点对应的允许现价上限（追涨空间）：避免现价远超推荐买入价
+_BUY_UPPER_LIMIT = {
+    "第一类买点": 1.05,  # 一买：下跌转折，最多允许现价超过买点5%
+    "第二类买点": 1.07,  # 二买：回调低点，允许+7%
+    "第三类买点": 1.08,  # 三买：突破回试，允许+8%
+}
+
+
+def _price_reasonable(hit, cur_price):
+    """
+    判断现价是否仍处于买点的合理介入区间。
+    hit 可能带 buy_point_prices: [(type_name, buy_price), ...]
+    兼容旧缓存无此字段时默认放行。
+    规则：只要有任意一个买点满足 cur_price <= buy_price * 上限，就算合理。
+    """
+    bpps = hit.get("buy_point_prices") or []
+    if not bpps:
+        return True  # 老缓存或无价格信息，默认放行
+    if not cur_price or cur_price <= 0:
+        return True  # 没拿到实时价时放过去
+    for type_name, bp in bpps:
+        if not bp or bp <= 0:
+            continue
+        limit = _BUY_UPPER_LIMIT.get(type_name, 1.06)
+        if cur_price <= bp * limit:
+            return True
+    return False
+
+
 # ============================================================
 # 静态页面
 # ============================================================
@@ -465,13 +494,13 @@ def scan_status():
 
 @app.route("/api/scan/hits")
 def scan_hits():
-    """获取扫描命中结果（带实时行情）"""
+    """获取扫描命中结果（带实时行情 + 现价合理性过滤）"""
     hits = scanner.get_hits()
     if not hits:
         return jsonify([])
     # 批量获取实时行情补涨跌幅
     codes = []
-    for h in hits[:60]:  # 最多补60只
+    for h in hits[:80]:  # 先多拿一点，过滤后保证至少60只
         pre = "sh" if h["symbol"].startswith(("6", "9", "5")) else "sz"
         codes.append(pre + h["symbol"])
     rt_map = {}
@@ -483,8 +512,12 @@ def scan_hits():
     except Exception:
         pass
     out = []
-    for h in hits[:60]:
+    for h in hits[:80]:
         r = rt_map.get(h["symbol"], {})
+        cur_price = r.get("price") or h.get("price") or 0
+        # 关键过滤：现价必须仍处于买点合理区间内（避免追高）
+        if not _price_reasonable(h, cur_price):
+            continue
         out.append({
             "symbol": h["symbol"],
             "name": h["name"],
@@ -496,17 +529,19 @@ def scan_hits():
             "score_detail": h["score_detail"],
             "detail": h["detail"],
         })
+        if len(out) >= 60:
+            break
     return jsonify(out)
 
 
 @app.route("/api/pool", methods=["GET"])
 def pool():
-    """推荐股票池：优先返回全市场扫描命中，无缓存则返回样本池"""
+    """推荐股票池：优先返回全市场扫描命中（带现价合理性过滤），无缓存则返回样本池"""
     hits = scanner.get_hits()
     if hits:
-        # 复用 scan_hits 的逻辑
+        # 复用 scan_hits 的逻辑 + 现价合理性过滤
         codes = []
-        for h in hits[:60]:
+        for h in hits[:80]:  # 先多拿，过滤后保60
             pre = "sh" if h["symbol"].startswith(("6", "9", "5")) else "sz"
             codes.append(pre + h["symbol"])
         rt_map = {}
@@ -518,8 +553,12 @@ def pool():
         except Exception:
             pass
         out = []
-        for h in hits[:60]:
+        for h in hits[:80]:
             r = rt_map.get(h["symbol"], {})
+            cur_price = r.get("price") or h.get("price") or 0
+            # 关键过滤：现价必须仍处于买点合理区间内（避免追高）
+            if not _price_reasonable(h, cur_price):
+                continue
             out.append({
                 "symbol": h["symbol"],
                 "name": h["name"],
@@ -531,6 +570,8 @@ def pool():
                 "score_detail": h["score_detail"],
                 "detail": h["detail"],
             })
+            if len(out) >= 60:
+                break
         return jsonify(out)
     # 无扫描缓存，回退样本池
     result = []
