@@ -215,6 +215,7 @@ async function loadWatchlist(){
   if(!d || !d.length){
     el.innerHTML = `<div class="empty"><div class="ic">${EMPTY_ICONS.watch}</div>暂无自选<br>输入代码添加</div>`;
     document.getElementById('watchCount').textContent='';
+    loadWatchStats();
     return;
   }
   document.getElementById('watchCount').textContent = d.length+'只';
@@ -229,12 +230,43 @@ async function loadWatchlist(){
     const r = map[s.symbol] || {};
     const price = r.price || s.price || 0;
     const chg = r.change_pct!=null?r.change_pct:(s.change_pct||0);
+    const bp = s.buy_price||0;
+    const pnl = bp>0 ? (price - bp) / bp * 100 : 0;
+    const pnlStr = bp>0 ? `<span class="watch-pnl ${pnl>=0?'up':'down'}">${pnl>=0?'+':''}${pnl.toFixed(2)}%</span>` : '';
+    const bpStr = bp>0 ? `<span class="watch-bp">买:${fmt(bp)}</span>` : '';
     return `<div class="quote-item" onclick="openDetail('${s.symbol}','${s.name}')">
-      <div class="info"><div class="name">${s.name}</div><div class="sym">${s.symbol}</div></div>
+      <div class="info"><div class="name">${s.name} ${pnlStr}</div><div class="sym">${s.symbol} ${bpStr}</div></div>
       <div class="price ${chgCls(chg)}">${fmt(price)}</div>
       ${chgBadge(chg)}
+      ${bp>0 ? `<span class="watch-sell" onclick="event.stopPropagation();sellWatch('${s.symbol}','${s.name}',${bp},${price})">卖</span>` : ''}
     </div>`;
   }).join('');
+  loadWatchStats();
+}
+async function loadWatchStats(){
+  const s = await api('/api/watchlist/stats');
+  const el = document.getElementById('watchStats');
+  if(!el) return;
+  if(!s || !s.total){ el.innerHTML=''; return; }
+  el.innerHTML = `<span class="ws-tag">已平仓${s.total}笔</span> <span class="ws-tag ${s.win_rate>=50?'up':'down'}">胜率${s.win_rate}%</span> <span class="ws-tag ${s.total_pnl>=0?'up':'down'}">总盈亏${s.total_pnl>=0?'+':''}${s.total_pnl}</span> <a href="javascript:showWatchTrades()" style="color:var(--accent);font-size:11px">明细</a>`;
+}
+async function sellWatch(symbol, name, buyPrice, curPrice){
+  if(!confirm(`${name} 卖出？\n买入价: ${fmt(buyPrice)}\n现价: ${fmt(curPrice)}\n盈亏: ${((curPrice-buyPrice)/buyPrice*100).toFixed(2)}%`)) return;
+  const r = await api(`/api/watchlist/${symbol}/sell`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sell_price:curPrice,buy_price:buyPrice,name:name})});
+  if(r && r.ok){ toast(`已卖出，盈亏${r.pnl>=0?'+':''}${r.pnl_pct}%`); loadWatchlist(); }
+}
+async function showWatchTrades(){
+  const s = await api('/api/watchlist/stats');
+  if(!s || !s.trades || !s.trades.length){ toast('暂无平仓记录'); return; }
+  const html = s.trades.map(t=>`
+    <div class="paired-item">
+      <div class="pi-head"><span class="pi-sym">${t.name||t.symbol}</span><span class="pi-pnl ${t.pnl>=0?'up':'down'}">${t.pnl>=0?'+':''}${t.pnl_pct}%</span></div>
+      <div class="pi-detail">买:${fmt(t.buy_price)} → 卖:${fmt(t.sell_price)} 盈亏:${t.pnl>=0?'+':''}${t.pnl}</div>
+      <div class="pi-time">${(t.sold_at||'').slice(0,16)}</div>
+    </div>`).join('');
+  document.getElementById('tradesModalTitle').textContent='自选股平仓明细';
+  document.getElementById('tradesModalBody').innerHTML = html;
+  document.getElementById('tradesModal').style.display='flex';
 }
 async function loadPool(){
   const d = await api('/api/pool');
@@ -312,8 +344,15 @@ async function addWatch(){
   const inp = document.getElementById('searchInput');
   const sym = inp.value.trim();
   if(!sym){ toast('请输入代码'); return; }
-  const r = await api('/api/watchlist', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({symbol:sym})});
-  if(r && r.ok){ inp.value=''; toast('已添加'); loadWatchlist(); }
+  // 先获取当前价作为买入价
+  let buyPrice = 0;
+  try{
+    const pre = sym.match(/^[695]/)?'sh':'sz';
+    const rt = await api('/api/realtime?codes='+pre+sym);
+    if(rt && rt.length){ buyPrice = rt[0].price||0; }
+  }catch(e){}
+  const r = await api('/api/watchlist', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({symbol:sym,buy_price:buyPrice})});
+  if(r && r.ok){ inp.value=''; toast(buyPrice>0?`已添加，买入价${fmt(buyPrice)}`:'已添加'); loadWatchlist(); }
 }
 
 // ============ 详情/分析页 ============

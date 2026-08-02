@@ -326,13 +326,19 @@ def get_watchlist():
             last = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else last
             chg = (last["close"] - prev["close"]) / prev["close"] * 100
+            cur_price = round(float(last["close"]), 3)
+            buy_price = round(float(it.get("buy_price") or 0), 3)
+            pnl_pct = round((cur_price - buy_price) / buy_price * 100, 2) if buy_price > 0 else 0
             result.append({
                 "symbol": it["symbol"], "name": it["name"] or _name(it["symbol"]),
-                "price": round(float(last["close"]), 3),
+                "price": cur_price,
                 "change_pct": round(chg, 2),
+                "buy_price": buy_price,
+                "pnl_pct": pnl_pct,
             })
         except Exception:
-            result.append({"symbol": it["symbol"], "name": it["name"], "price": 0, "change_pct": 0})
+            result.append({"symbol": it["symbol"], "name": it["name"], "price": 0, "change_pct": 0,
+                           "buy_price": round(float(it.get("buy_price") or 0), 3), "pnl_pct": 0})
     return jsonify(result)
 
 
@@ -341,10 +347,30 @@ def add_watchlist():
     data = request.json
     symbol = data.get("symbol", "").strip()
     name = data.get("name", "") or _name(symbol)
+    buy_price = float(data.get("buy_price", 0) or 0)
     if not symbol:
         return jsonify({"error": "代码不能为空"}), 400
-    trading.add_watch(symbol, name)
+    trading.add_watch(symbol, name, buy_price)
     return jsonify({"ok": True})
+
+
+@app.route("/api/watchlist/<symbol>/sell", methods=["POST"])
+def sell_watchlist(symbol):
+    """卖出自选股：记录卖出价，计算盈亏，从自选列表移除"""
+    data = request.json or {}
+    sell_price = float(data.get("sell_price", 0) or 0)
+    name = data.get("name", "") or _name(symbol)
+    buy_price = float(data.get("buy_price", 0) or 0)
+    if sell_price <= 0:
+        return jsonify({"error": "卖出价无效"}), 400
+    result = trading.sell_watch(symbol, name, buy_price, sell_price)
+    return jsonify(result)
+
+
+@app.route("/api/watchlist/stats", methods=["GET"])
+def watch_stats():
+    """自选股胜率/收益率统计"""
+    return jsonify(trading.get_watch_stats())
 
 
 @app.route("/api/watchlist/<symbol>", methods=["DELETE"])
@@ -584,22 +610,8 @@ def pool():
             if len(out) >= 60:
                 break
         return jsonify(out)
-    # 无扫描缓存，回退样本池
-    result = []
-    for s in config.STOCK_POOL:
-        try:
-            df = fetch_kline(s, level="daily", count=2)
-            last = df.iloc[-1]
-            prev = df.iloc[-2] if len(df) > 1 else last
-            chg = (last["close"] - prev["close"]) / prev["close"] * 100
-            result.append({
-                "symbol": s, "name": _name(s),
-                "price": round(float(last["close"]), 3),
-                "change_pct": round(chg, 2),
-            })
-        except Exception:
-            result.append({"symbol": s, "name": _name(s), "price": 0, "change_pct": 0})
-    return jsonify(result)
+    # 无扫描缓存，返回空（只显示命中的股票）
+    return jsonify([])
 
 
 # ============================================================

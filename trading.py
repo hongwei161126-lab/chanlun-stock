@@ -101,7 +101,18 @@ def init_db():
         CREATE TABLE IF NOT EXISTS watchlist (
             symbol TEXT PRIMARY KEY,
             name TEXT,
+            buy_price REAL DEFAULT 0,
             added_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS watch_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            name TEXT,
+            buy_price REAL,
+            sell_price REAL,
+            pnl REAL,
+            pnl_pct REAL,
+            sold_at TEXT
         );
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -123,6 +134,8 @@ def init_db():
         _ensure_column(c, "trades", "strategy_term", "TEXT DEFAULT 'long'")
         # 交易费用列（模拟实盘交税）
         _ensure_column(c, "trades", "fee", "REAL DEFAULT 0")
+        # 自选股买入价列（迁移用）
+        _ensure_column(c, "watchlist", "buy_price", "REAL DEFAULT 0")
         c.commit()
 
 
@@ -422,10 +435,10 @@ def get_watchlist():
     return [dict(r) for r in rows]
 
 
-def add_watch(symbol, name=""):
+def add_watch(symbol, name="", buy_price=0):
     with _conn() as c:
-        c.execute("INSERT OR REPLACE INTO watchlist(symbol,name,added_at) VALUES(?,?,?)",
-                  (symbol, name, _now().isoformat()))
+        c.execute("INSERT OR REPLACE INTO watchlist(symbol,name,buy_price,added_at) VALUES(?,?,?,?)",
+                  (symbol, name, buy_price, _now().isoformat()))
         c.commit()
     return {"ok": True}
 
@@ -437,12 +450,50 @@ def remove_watch(symbol):
     return {"ok": True}
 
 
+def sell_watch(symbol, name, buy_price, sell_price):
+    """记录自选股卖出，计算盈亏并写入 watch_trades 表，然后从自选列表移除"""
+    buy_price = float(buy_price or 0)
+    sell_price = float(sell_price or 0)
+    pnl = round(sell_price - buy_price, 4)
+    pnl_pct = round((sell_price - buy_price) / buy_price * 100, 2) if buy_price > 0 else 0
+    with _conn() as c:
+        c.execute("""INSERT INTO watch_trades(symbol,name,buy_price,sell_price,pnl,pnl_pct,sold_at)
+                     VALUES(?,?,?,?,?,?,?)""",
+                  (symbol, name, buy_price, sell_price, pnl, pnl_pct, _now().isoformat()))
+        c.execute("DELETE FROM watchlist WHERE symbol=?", (symbol,))
+        c.commit()
+    return {"ok": True, "pnl": pnl, "pnl_pct": pnl_pct}
+
+
+def get_watch_stats():
+    """统计自选股已平仓记录的胜率和收益率"""
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM watch_trades ORDER BY sold_at DESC").fetchall()
+    trades = [dict(r) for r in rows]
+    if not trades:
+        return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0, "avg_pnl_pct": 0, "total_pnl": 0, "trades": []}
+    wins = sum(1 for t in trades if t["pnl"] > 0)
+    losses = sum(1 for t in trades if t["pnl"] <= 0)
+    total_pnl = round(sum(t["pnl"] for t in trades), 2)
+    avg_pnl_pct = round(sum(t["pnl_pct"] for t in trades) / len(trades), 2)
+    return {
+        "total": len(trades),
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / len(trades) * 100, 1),
+        "avg_pnl_pct": avg_pnl_pct,
+        "total_pnl": total_pnl,
+        "trades": trades,
+    }
+
+
 def reset_all(capital=INITIAL_CAPITAL):
     """清空所有交易数据，重置账户到初始资金"""
     with _conn() as c:
         c.execute("DELETE FROM positions")
         c.execute("DELETE FROM trades")
         c.execute("DELETE FROM watchlist")
+        c.execute("DELETE FROM watch_trades")
         c.execute("DELETE FROM settings WHERE key != 'auto_mode'")
         c.execute("UPDATE account SET balance=?, initial=?, updated_at=? WHERE id=1",
                   (capital, capital, _now().isoformat()))

@@ -421,3 +421,18 @@ body{
   margin-top:14px; text-align:center; font-size:11px; color:var(--txt3);
 }
 .auth-tip a{ text-decoration:none; }
+
+/* ============ 自选股收益统计 ============ */
+.watch-stats{ margin-bottom:6px; font-size:11px; color:var(--txt2); line-height:1.6; }
+.ws-tag{ display:inline-block; padding:1px 6px; border-radius:4px; background:var(--bg); margin-right:4px; }
+.ws-tag.up{ color:var(--up); }
+.ws-tag.down{ color:var(--down); }
+.watch-pnl{ font-size:11px; font-weight:600; margin-left:4px; }
+.watch-bp{ font-size:10px; color:var(--txt3); margin-left:4px; }
+.watch-sell{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:22px; height:22px; border-radius:4px; font-size:11px; font-weight:600;
+  background:rgba(239,68,68,.15); color:var(--down); cursor:pointer;
+  flex-shrink:0; margin-left:4px;
+}
+.watch-sell:active{ transform:scale(.9); }
