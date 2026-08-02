@@ -42,16 +42,8 @@ async function _render_auth(){
       <label>确认密码</label>
       <input type="password" id="setPwd2" placeholder="再输一次" autocomplete="new-password">
     </div>
-    <button class="btn success auth-btn" id="btnSetPwd">设置密码并进入</button>`;
-    setTimeout(()=>{
-      const p1=document.getElementById('setPwd1');
-      const p2=document.getElementById('setPwd2');
-      const btn=document.getElementById('btnSetPwd');
-      const onEnter = e=>{ if(e.key==='Enter') doSetPwd(); };
-      if(p1){ p1.focus(); p1.addEventListener('keydown', onEnter); }
-      if(p2){ p2.addEventListener('keydown', onEnter); }
-      if(btn){ btn.addEventListener('click', doSetPwd); }
-    },50);
+    <button type="button" class="btn success auth-btn" onclick="doSetPwd()">设置密码并进入</button>`;
+    setTimeout(()=>{ const p=document.getElementById('setPwd1'); if(p) p.focus(); },50);
   }else if(!s.logged_in){
     // 已设密码，需登录
     el.innerHTML = `
@@ -63,38 +55,45 @@ async function _render_auth(){
       <label>访问密码</label>
       <input type="password" id="loginPwd" placeholder="请输入密码" autocomplete="current-password">
     </div>
-    <button class="btn success auth-btn" id="btnLogin">登录</button>
+    <button type="button" class="btn success auth-btn" onclick="doLogin()">登录</button>
     <div class="auth-tip"><a href="javascript:doShowChangePwd()" style="color:var(--accent)">我忘记密码 / 修改密码</a></div>`;
-    setTimeout(()=>{
-      const p=document.getElementById('loginPwd');
-      const btn=document.getElementById('btnLogin');
-      if(p){ p.focus(); p.addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); }); }
-      if(btn){ btn.addEventListener('click', doLogin); }
-    },50);
+    setTimeout(()=>{ const p=document.getElementById('loginPwd'); if(p){ p.focus(); p.onkeydown=e=>{ if(e.key==='Enter') doLogin(); }; } },50);
   }else{
     // 已登录，隐藏
     hideLogin();
   }
 }
 async function doSetPwd(){
-  const p1 = document.getElementById('setPwd1').value;
-  const p2 = document.getElementById('setPwd2').value;
-  if(!p1 || p1.length<4){ toast('密码至少4位'); return; }
-  if(p1 !== p2){ toast('两次密码不一致'); return; }
-  const r = await fetch(API+'/api/auth/set-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p1})}).then(r=>r.json());
-  if(!r || !r.ok){ toast(r?.msg||'设置失败'); return; }
-  // 设完密码自动登录
-  const lr = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p1})}).then(r=>r.json());
-  if(lr && lr.ok){ setToken(lr.token); toast('设置成功，已登录'); hideLogin(); bootApp(); return; }
-  toast(r.msg || '设置成功，请登录'); _render_auth();
+  try{
+    const p1 = document.getElementById('setPwd1').value;
+    const p2 = document.getElementById('setPwd2').value;
+    if(!p1 || p1.length<4){ toast('密码至少4位'); return; }
+    if(p1 !== p2){ toast('两次密码不一致'); return; }
+    toast('正在设置密码...');
+    const r = await fetch(API+'/api/auth/set-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p1})}).then(r=>r.json());
+    if(!r || !r.ok){ toast(r?.msg||'设置失败'); return; }
+    // 设完密码自动登录
+    const lr = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p1})}).then(r=>r.json());
+    if(lr && lr.ok){ setToken(lr.token); toast('设置成功，已登录'); hideLogin(); bootApp(); return; }
+    toast('设置成功，请登录'); _render_auth();
+  }catch(e){
+    toast('请求失败: '+e.message);
+    console.error('doSetPwd error:', e);
+  }
 }
 async function doLogin(){
-  const p = document.getElementById('loginPwd').value;
-  if(!p){ toast('请输入密码'); return; }
-  const r = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p})}).then(r=>r.json());
-  if(!r || !r.ok){ toast(r?.msg||'登录失败'); return; }
-  setToken(r.token);
-  toast('登录成功，7天免登录'); hideLogin(); bootApp();
+  try{
+    const p = document.getElementById('loginPwd').value;
+    if(!p){ toast('请输入密码'); return; }
+    toast('正在登录...');
+    const r = await fetch(API+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p})}).then(r=>r.json());
+    if(!r || !r.ok){ toast(r?.msg||'登录失败'); return; }
+    setToken(r.token);
+    toast('登录成功，7天免登录'); hideLogin(); bootApp();
+  }catch(e){
+    toast('请求失败: '+e.message);
+    console.error('doLogin error:', e);
+  }
 }
 function doShowChangePwd(){
   const el = document.getElementById('authForm');
@@ -110,16 +109,21 @@ function doShowChangePwd(){
   <div class="auth-tip"><a href="javascript:_render_auth()" style="color:var(--accent)">← 返回登录</a></div>`;
 }
 async function doChangePwd(){
-  const old = document.getElementById('chgOld').value;
-  const p1 = document.getElementById('chgP1').value;
-  const p2 = document.getElementById('chgP2').value;
-  if(p1 && p1.length<4){ toast('新密码至少4位'); return; }
-  if(p1 !== p2){ toast('两次新密码不一致'); return; }
-  const r = await fetch(API+'/api/auth/set-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_password:old,password:p1})}).then(r=>r.json());
-  if(!r || !r.ok){ toast(r?.msg||'修改失败'); return; }
-  toast('密码已修改，请用新密码重新登录');
-  setToken(''); // 旧token自动失效
-  setTimeout(_render_auth, 800);
+  try{
+    const old = document.getElementById('chgOld').value;
+    const p1 = document.getElementById('chgP1').value;
+    const p2 = document.getElementById('chgP2').value;
+    if(p1 && p1.length<4){ toast('新密码至少4位'); return; }
+    if(p1 !== p2){ toast('两次新密码不一致'); return; }
+    const r = await fetch(API+'/api/auth/set-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_password:old,password:p1})}).then(r=>r.json());
+    if(!r || !r.ok){ toast(r?.msg||'修改失败'); return; }
+    toast('密码已修改，请用新密码重新登录');
+    setToken(''); // 旧token自动失效
+    setTimeout(_render_auth, 800);
+  }catch(e){
+    toast('请求失败: '+e.message);
+    console.error('doChangePwd error:', e);
+  }
 }
 async function doLogout(){
   try{ await fetch(API+'/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+getToken()}}); }catch(e){}
