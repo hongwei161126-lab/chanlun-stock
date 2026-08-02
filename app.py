@@ -19,6 +19,17 @@ from chanlun import analyze as chanlun_analyze
 app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
+# 防止浏览器缓存旧版 app.js / style.css / index.html：
+# HTML/JS/CSS 静态文件一律加 no-cache（每次协商验证，但仍可用 304），避免登录功能等新逻辑因为缓存没生效
+@app.after_request
+def _no_cache_static(resp):
+    path = request.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
 # ============================================================
 # 全局鉴权中间件：所有 /api/* 请求（除 /api/auth/* 和 未设密码时）都要token
 # ============================================================

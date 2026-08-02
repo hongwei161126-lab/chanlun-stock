@@ -22,7 +22,9 @@ function hideLogin(){
   document.getElementById('authOverlay').classList.remove('show');
 }
 async function _render_auth(){
-  const s = await fetch(API+'/api/auth/state').then(r=>r.json()).catch(()=>({password_set:false,logged_in:false}));
+  // 渲染时也带本地token，正确判断"已登录"状态，避免重复弹登录
+  const tok = getToken();
+  const s = await fetch(API+'/api/auth/state'+(tok?'?token='+encodeURIComponent(tok):'')).then(r=>r.json()).catch(()=>({password_set:false,logged_in:false}));
   g_auth_state = s;
   const el = document.getElementById('authForm');
   if(!s.password_set){
@@ -38,10 +40,18 @@ async function _render_auth(){
     </div>
     <div class="auth-row">
       <label>确认密码</label>
-      <input type="password" id="setPwd2" placeholder="再输一次">
+      <input type="password" id="setPwd2" placeholder="再输一次" autocomplete="new-password">
     </div>
-    <button class="btn success auth-btn" onclick="doSetPwd()">设置密码并进入</button>`;
-    setTimeout(()=>{ const p=document.getElementById('setPwd1'); if(p) p.focus(); },50);
+    <button class="btn success auth-btn" id="btnSetPwd">设置密码并进入</button>`;
+    setTimeout(()=>{
+      const p1=document.getElementById('setPwd1');
+      const p2=document.getElementById('setPwd2');
+      const btn=document.getElementById('btnSetPwd');
+      const onEnter = e=>{ if(e.key==='Enter') doSetPwd(); };
+      if(p1){ p1.focus(); p1.addEventListener('keydown', onEnter); }
+      if(p2){ p2.addEventListener('keydown', onEnter); }
+      if(btn){ btn.addEventListener('click', doSetPwd); }
+    },50);
   }else if(!s.logged_in){
     // 已设密码，需登录
     el.innerHTML = `
@@ -53,9 +63,14 @@ async function _render_auth(){
       <label>访问密码</label>
       <input type="password" id="loginPwd" placeholder="请输入密码" autocomplete="current-password">
     </div>
-    <button class="btn success auth-btn" onclick="doLogin()">登录</button>
+    <button class="btn success auth-btn" id="btnLogin">登录</button>
     <div class="auth-tip"><a href="javascript:doShowChangePwd()" style="color:var(--accent)">我忘记密码 / 修改密码</a></div>`;
-    setTimeout(()=>{ const p=document.getElementById('loginPwd'); if(p){ p.focus(); p.onkeydown=e=>{ if(e.key==='Enter') doLogin(); }; } },50);
+    setTimeout(()=>{
+      const p=document.getElementById('loginPwd');
+      const btn=document.getElementById('btnLogin');
+      if(p){ p.focus(); p.addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); }); }
+      if(btn){ btn.addEventListener('click', doLogin); }
+    },50);
   }else{
     // 已登录，隐藏
     hideLogin();
@@ -916,8 +931,8 @@ function bootApp(){
       bootApp();
     }
   }catch(e){
-    // 接口异常（服务器没启动等），还是先加载内容，等实际请求时再处理401
-    hideLogin();
-    bootApp();
+    // 接口异常：保守起见仍然显示登录遮罩（让用户可先设密码/登录），同时后台尝试 bootApp；等实际请求 401 时仍会自动弹登录
+    showLogin();
+    try{ bootApp(); }catch(e2){}
   }
 })();
