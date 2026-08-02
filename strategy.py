@@ -14,10 +14,23 @@ def detect_buy_points(analysis, params):
     在某级别的缠论解析结果上识别买点（严格版，依据缠论原著收紧条件）。
     返回 list[dict]，每个含 type, level, price, detail, strength
 
-    收紧原则：
-      - 一买：强背驰（面积比<0.6）+ 至少2个下跌中枢（走势完成）+ 价在中枢下方
-      - 二买：一买后回调不破前低 + 回调幅度<上涨幅度50% + 价格回到中枢区域
-      - 三买：突破幅度>3% + 回试距ZG有2%空间 + 中枢至少3笔
+    收紧原则（叠加缠论原著多课条件）：
+      全局：
+        - 笔数≥5 + 笔幅度过滤(>2%)
+        - 买点时效性：最后笔在最近10根K线内（过期不推荐）
+      一买（第17、24、26、29、67课）：
+        - 强背驰(面积比<0.6) + DIF/DEA在0轴下方 + DIF线底背离
+        - 至少2个下跌中枢且中枢逐步走低（走势终完美）
+        - 底分型确认（背驰后转折成立）
+        - 价在最后中枢下方
+      二买（第20、21课）：
+        - 前序必须有一买确认（背驰转折后）
+        - 回调不破前低 + 回调幅度<上涨50%
+        - 回调低点不进入中枢内部（在中枢ZD上方或中枢上沿）
+      三买（第20课）：
+        - 中枢延伸不超过9笔（超9笔=级别升级，非本级别三买）
+        - 突破幅度>3% + 回试距ZG有2%空间
+        - 回试后必须有向上确认笔（转折确认）
     """
     results = []
     bi = analysis["bi"]
@@ -25,10 +38,24 @@ def detect_buy_points(analysis, params):
     is_div = analysis["divergence"]
     div_detail = analysis["divergence_detail"]
     last_price = analysis["last_price"]
+    klines = analysis.get("klines", [])
+    bottom_confirmed = analysis.get("bottom_fractal_confirmed", False)
 
     # 全局过滤：笔数不足5则走势不充分
     if len(bi) < 5:
         return results
+
+    # 全局过滤：笔幅度过滤（过滤掉噪音笔，第67课）
+    bi = chanlun.filter_weak_bi(bi, min_pct=0.02)
+    if len(bi) < 5:
+        return results
+
+    # 买点时效性：最后笔的结束位置在最近10根合并K线内
+    n_klines = len(klines)
+    max_lookback = 10
+    last_bi_end_idx = bi[-1]["end_index"] if bi else 0
+    if n_klines > 0 and (n_klines - 1 - last_bi_end_idx) > max_lookback:
+        return results  # 买点太久远，已过期
 
     # 背驰强度（面积比）
     div_ratio = 1.0
@@ -36,7 +63,10 @@ def detect_buy_points(analysis, params):
         div_ratio = div_detail["curr_area"] / div_detail["prev_area"]
 
     # ---- 第一类买点：下跌背驰转折 ----
-    # 严格条件：强背驰(面积比<0.6) + 至少2个中枢(走势完成) + 价在中枢下方
+    # 严格条件：
+    #   强背驰(面积比<0.6) + 至少2个中枢 + 价在中枢下方
+    #   + 中枢逐步走低（下跌趋势确认）
+    #   + 底分型确认（转折成立，第67课）
     if is_div and bi and div_ratio < 0.6:
         last_bi = bi[-1]
         if last_bi["direction"] == "down":
@@ -44,18 +74,29 @@ def detect_buy_points(analysis, params):
             if zhongshu:
                 last_zs = zhongshu[-1]
                 below_zhongshu = last_bi["end_value"] < last_zs["ZD"]
-            # 要求至少2个中枢（走势终完美，下跌走势完成）
+            # 至少2个中枢（走势终完美，下跌走势完成）
             has_trend = len(zhongshu) >= 2
-            if below_zhongshu and has_trend:
-                results.append({
-                    "type": "第一类买点",
-                    "price": last_bi["end_value"],
-                    "detail": f"强背驰转折(力度比{div_ratio:.0%})，{len(zhongshu)}中枢下跌走势完成",
-                    "strength": _div_strength(div_detail),
-                })
+            # 中枢逐步走低（真正的下跌趋势，非震荡）
+            zs_declining = True
+            if len(zhongshu) >= 2:
+                for j in range(1, len(zhongshu)):
+                    if zhongshu[j]["ZD"] >= zhongshu[j-1]["ZD"]:
+                        zs_declining = False
+                        break
+            if below_zhongshu and has_trend and zs_declining:
+                # 底分型确认（背驰后转折成立）
+                if bottom_confirmed:
+                    results.append({
+                        "type": "第一类买点",
+                        "price": last_bi["end_value"],
+                        "detail": f"强背驰(力度比{div_ratio:.0%})+DIF底背离+{len(zhongshu)}中枢走低+底分型确认",
+                        "strength": _div_strength(div_detail),
+                    })
 
     # ---- 第二类买点 ----
-    # 严格条件：一买后回调不破前低 + 回调幅度<上涨50% + 价格在中枢ZD附近或上方
+    # 严格条件：
+    #   前序有一买确认（背驰转折后） + 回调不破前低 + 回调<上涨50%
+    #   + 回调低点不进入中枢内部（在中枢ZD上方）
     if bi and len(bi) >= 3 and zhongshu:
         last3 = bi[-3:]
         if (last3[0]["direction"] == "down" and last3[1]["direction"] == "up"
@@ -70,40 +111,57 @@ def detect_buy_points(analysis, params):
                 # 回调幅度<上涨幅度的50%（回调不深，强势）
                 if up_range > 0 and pullback / up_range < 0.5:
                     last_zs = zhongshu[-1]
-                    # 价格回到中枢区域（ZD附近或上方），非继续下跌
+                    # 回调低点不进入中枢内部（在ZD上方或ZD附近2%内）
                     if curr_low >= last_zs["ZD"] * 0.98:
-                        results.append({
-                            "type": "第二类买点",
-                            "price": curr_low,
-                            "detail": f"一买后回调{pullback/up_range*100:.0f}%不破前低，回到中枢区域",
-                            "strength": 2,
-                        })
+                        # 前序有一买确认：背驰发生过且前面有下跌走势
+                        has_first_buy = is_div or len(zhongshu) >= 2
+                        if has_first_buy:
+                            results.append({
+                                "type": "第二类买点",
+                                "price": curr_low,
+                                "detail": f"背驰转折后回调{pullback/up_range*100:.0f}%不破前低，中枢ZD上方",
+                                "strength": 2,
+                            })
 
     # ---- 第三类买点 ----
-    # 严格条件：突破幅度>3% + 回试距ZG有2%空间 + 中枢至少3笔
+    # 严格条件：
+    #   中枢延伸不超过9笔（超9笔=级别升级，第22课）
+    #   突破幅度>3% + 回试距ZG有2%空间
+    #   回试后必须有向上确认笔（转折确认）
     if zhongshu and bi and len(bi) >= 2:
         last_zs = zhongshu[-1]
         ZG = last_zs["ZG"]
-        # 中枢至少3笔（有效中枢）
         zs_bi_count = len(last_zs.get("bi_list", []))
-        if zs_bi_count >= 3:
+        # 中枢至少3笔 + 不超过9笔（超9笔级别升级）
+        if 3 <= zs_bi_count <= 9:
             last_up = bi[-2] if bi[-2]["direction"] == "up" else None
             last_down = bi[-1] if bi[-1]["direction"] == "down" else None
             if last_up and last_down:
                 broke_up = last_up["end_value"] > ZG and last_up["start_value"] <= ZG
                 not_break = last_down["end_value"] > ZG
                 if broke_up and not_break and ZG > 0:
-                    # 突破幅度>3%
                     breakout_pct = (last_up["end_value"] - ZG) / ZG * 100
-                    # 回试距ZG有2%以上空间（安全边际）
                     margin_pct = (last_down["end_value"] - ZG) / ZG * 100
                     if breakout_pct > 3 and margin_pct > 2:
-                        results.append({
-                            "type": "第三类买点",
-                            "price": last_down["end_value"],
-                            "detail": f"突破中枢{breakout_pct:.1f}%后回试，距ZG安全边际{margin_pct:.1f}%",
-                            "strength": 3,
-                        })
+                        # 回试后必须有向上确认笔（当前最后一笔是向下=回试，
+                        # 需要确认是否有随后的向上笔，或者当前价已回升）
+                        confirmed = False
+                        if len(bi) >= 3 and bi[-1]["direction"] == "down":
+                            # 如果最后笔是回试的向下笔，检查当前价是否已回升
+                            if last_price > last_down["end_value"]:
+                                confirmed = True
+                        elif len(bi) >= 3 and bi[-3]["direction"] == "up" \
+                             and bi[-2]["direction"] == "down" \
+                             and bi[-1]["direction"] == "up":
+                            # 回试后已有向上笔确认
+                            confirmed = True
+                        if confirmed:
+                            results.append({
+                                "type": "第三类买点",
+                                "price": last_down["end_value"],
+                                "detail": f"突破中枢{breakout_pct:.1f}%后回试，距ZG{margin_pct:.1f}%，已确认",
+                                "strength": 3,
+                            })
 
     return results
 

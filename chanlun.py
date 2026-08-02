@@ -218,24 +218,23 @@ def check_divergence(df, bi_list, lookback=2):
     判断最近一段向下笔是否对前一段向下笔构成背驰。
     背驰定义（第26课）：同向趋势中，后一段走势力度 < 前一段。
     力度用 MACD 红绿柱面积近似。
+    收紧条件（第24、29课）：
+      - DIF/DEA 必须在 0 轴下方（真正的下跌趋势）
+      - DIF 线底背离（DIF 低点抬高，即使价格新低）
     返回 (is_divergence, detail)
     """
     if len(bi_list) < 3:
         return False, {"reason": "笔数不足"}
-    # 找最近的向下笔
     down_bi = [b for b in bi_list if b["direction"] == "down"]
     if len(down_bi) < 2:
         return False, {"reason": "向下笔不足2段"}
-    # 取最近 lookback 段向下笔对比
     recent = down_bi[-lookback:] if len(down_bi) >= lookback else down_bi
     if len(recent) < 2:
         return False, {"reason": "可对比向下笔不足"}
     prev_d, curr_d = recent[-2], recent[-1]
-    # 价格创新低（向下笔延续）
     price_lower = curr_d["end_value"] < prev_d["end_value"]
     if not price_lower:
         return False, {"reason": "价格未创新低，非背驰结构"}
-    # 计算 MACD 柱面积（用dif差值近似力度）
     try:
         prev_area = _macd_area(df, prev_d)
         curr_area = _macd_area(df, curr_d)
@@ -243,12 +242,41 @@ def check_divergence(df, bi_list, lookback=2):
         return False, {"reason": "MACD计算异常"}
     # 背驰：价格新低但力度（面积）减小
     is_div = curr_area < prev_area and curr_area > 0
-    return is_div, {
+    if not is_div:
+        return False, {"reason": "MACD面积未缩小，非背驰"}
+
+    # === 收紧条件1：DIF/DEA 必须在 0 轴下方（第29课：真正的下跌趋势） ===
+    try:
+        seg = df.loc[curr_d["start_kline"]["begin"]:curr_d["end_kline"]["end"]]
+        if "dif" in seg.columns and "dea" in seg.columns:
+            dif_mean = float(seg["dif"].mean())
+            dea_mean = float(seg["dea"].mean())
+            if dif_mean > 0 or dea_mean > 0:
+                return False, {"reason": f"DIF/DEA未在0轴下方(DIF={dif_mean:.4f})，非下跌趋势背驰"}
+    except Exception:
+        pass
+
+    # === 收紧条件2：DIF 线底背离（DIF低点抬高，即使价格新低） ===
+    # 第24课：真正的背驰是黄白线也出现背离，不仅柱面积
+    try:
+        prev_dif_min = float(df.loc[prev_d["start_kline"]["begin"]:prev_d["end_kline"]["end"], "dif"].min())
+        curr_dif_min = float(df.loc[curr_d["start_kline"]["begin"]:curr_d["end_kline"]["end"], "dif"].min())
+        dif_divergence = curr_dif_min > prev_dif_min  # DIF低点抬高=底背离
+    except Exception:
+        dif_divergence = True  # 计算异常时不卡这一条
+
+    if not dif_divergence:
+        return False, {"reason": "DIF线未底背离(黄白线低点未抬高)，非标准背驰"}
+
+    return True, {
         "prev_low": prev_d["end_value"],
         "curr_low": curr_d["end_value"],
         "prev_area": round(prev_area, 4),
         "curr_area": round(curr_area, 4),
         "price_lower": price_lower,
+        "dif_divergence": dif_divergence,
+        "prev_dif_min": round(prev_dif_min, 4) if 'prev_dif_min' in dir() else None,
+        "curr_dif_min": round(curr_dif_min, 4) if 'curr_dif_min' in dir() else None,
     }
 
 
@@ -332,4 +360,49 @@ def analyze(df, params):
         "divergence_detail": div_detail,
         "last_price": float(df["close"].iloc[-1]),
         "macd_df": macd_df,
+        # 底分型确认：最后一根K线是否已形成底分型（背驰后的转折确认）
+        "bottom_fractal_confirmed": _check_bottom_fractal_confirmed(fractals, klines, df),
     }
+
+
+def _check_bottom_fractal_confirmed(fractals, klines, df):
+    """
+    检查最近的底分型是否已确认（第67课：背驰后需底分型确认转折）。
+    条件：最后一个分型是底分型，且其后已有至少1根K线收在其上方（确认成立）。
+    """
+    if not fractals:
+        return False
+    last_f = fractals[-1]
+    if last_f["type"] != "bottom":
+        return False
+    # 底分型的 index 在 klines 中的位置，检查其后是否有K线
+    n = len(klines)
+    if last_f["index"] >= n - 1:
+        return False  # 底分型是最后一根，未确认
+    # 底分型后的K线收盘价需高于底分型低点（转折确认）
+    confirmed = False
+    for i in range(last_f["index"] + 1, n):
+        if klines[i]["close"] > last_f["value"]:
+            confirmed = True
+            break
+    return confirmed
+
+
+def filter_weak_bi(bi_list, min_pct=0.02):
+    """
+    过滤幅度过小的笔（第67课：笔需有足够幅度才有意义）。
+    min_pct: 笔的幅度（起点到终点）需达到的最小百分比。
+    返回过滤后的笔列表。
+    """
+    if not bi_list:
+        return bi_list
+    filtered = []
+    for b in bi_list:
+        start_val = b["start_value"]
+        end_val = b["end_value"]
+        if start_val <= 0:
+            continue
+        pct = abs(end_val - start_val) / start_val
+        if pct >= min_pct:
+            filtered.append(b)
+    return filtered
