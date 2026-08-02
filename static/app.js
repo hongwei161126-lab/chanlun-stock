@@ -272,6 +272,10 @@ async function loadPool(){
   const d = await api('/api/pool');
   const el = document.getElementById('poolList');
   if(!d) return;
+  if(!d.length){
+    el.innerHTML = `<div class="empty"><div class="ic">${EMPTY_ICONS.pool||'📋'}</div>暂无命中股票<br><span style="font-size:11px;color:var(--txt3)">点击上方按钮重新扫描</span></div>`;
+    return;
+  }
   // /api/pool 已带实时行情，无需再单独请求
   el.innerHTML = d.map(s=>{
     const price = s.price || 0;
@@ -333,6 +337,10 @@ async function pollScan(){
     // 扫描完成或出错
     if(s.status === 'done'){
       toast(`扫描完成，命中 ${s.cached_hits} 只`);
+      // 延迟加载推荐池，等缓存写入完成
+      setTimeout(loadPool, 500);
+    } else if(s.status === 'error'){
+      toast('扫描出错: '+(s.msg||''));
     }
     document.querySelector('.scan-btn').style.display='block';
     document.querySelector('.scan-btn').textContent = '重新扫描';
