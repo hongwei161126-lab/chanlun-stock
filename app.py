@@ -532,13 +532,13 @@ def scan_status():
 
 @app.route("/api/scan/hits")
 def scan_hits():
-    """获取扫描命中结果（带实时行情 + 现价合理性过滤）"""
+    """获取扫描命中结果（带实时行情）"""
     hits = scanner.get_hits()
     if not hits:
         return jsonify([])
     # 批量获取实时行情补涨跌幅
     codes = []
-    for h in hits[:80]:  # 先多拿一点，过滤后保证至少60只
+    for h in hits[:80]:
         pre = "sh" if h["symbol"].startswith(("6", "9", "5")) else "sz"
         codes.append(pre + h["symbol"])
     rt_map = {}
@@ -553,13 +553,10 @@ def scan_hits():
     for h in hits[:80]:
         r = rt_map.get(h["symbol"], {})
         cur_price = r.get("price") or h.get("price") or 0
-        # 关键过滤：现价必须仍处于买点合理区间内（避免追高）
-        if not _price_reasonable(h, cur_price):
-            continue
         out.append({
             "symbol": h["symbol"],
             "name": h["name"],
-            "price": r.get("price", h["price"]),
+            "price": cur_price,
             "change_pct": r.get("change_pct", 0),
             "buy_types": h["buy_types"],
             "grade": h["grade"],
@@ -574,45 +571,41 @@ def scan_hits():
 
 @app.route("/api/pool", methods=["GET"])
 def pool():
-    """推荐股票池：优先返回全市场扫描命中（带现价合理性过滤），无缓存则返回样本池"""
+    """推荐股票池：返回全市场扫描命中（已按评分排序）"""
     hits = scanner.get_hits()
-    if hits:
-        # 复用 scan_hits 的逻辑 + 现价合理性过滤
-        codes = []
-        for h in hits[:80]:  # 先多拿，过滤后保60
-            pre = "sh" if h["symbol"].startswith(("6", "9", "5")) else "sz"
-            codes.append(pre + h["symbol"])
-        rt_map = {}
-        try:
-            rt = fetch_realtime(codes)
-            if rt:
-                for r in rt:
-                    rt_map[r["code"]] = r
-        except Exception:
-            pass
-        out = []
-        for h in hits[:80]:
-            r = rt_map.get(h["symbol"], {})
-            cur_price = r.get("price") or h.get("price") or 0
-            # 关键过滤：现价必须仍处于买点合理区间内（避免追高）
-            if not _price_reasonable(h, cur_price):
-                continue
-            out.append({
-                "symbol": h["symbol"],
-                "name": h["name"],
-                "price": r.get("price", h["price"]),
-                "change_pct": r.get("change_pct", 0),
-                "buy_types": h["buy_types"],
-                "grade": h["grade"],
-                "score": h["score"],
-                "score_detail": h["score_detail"],
-                "detail": h["detail"],
-            })
-            if len(out) >= 60:
-                break
-        return jsonify(out)
-    # 无扫描缓存，返回空（只显示命中的股票）
-    return jsonify([])
+    if not hits:
+        return jsonify([])
+    # 批量获取实时行情补涨跌幅
+    codes = []
+    for h in hits[:80]:
+        pre = "sh" if h["symbol"].startswith(("6", "9", "5")) else "sz"
+        codes.append(pre + h["symbol"])
+    rt_map = {}
+    try:
+        rt = fetch_realtime(codes)
+        if rt:
+            for r in rt:
+                rt_map[r["code"]] = r
+    except Exception:
+        pass
+    out = []
+    for h in hits[:80]:
+        r = rt_map.get(h["symbol"], {})
+        cur_price = r.get("price") or h.get("price") or 0
+        out.append({
+            "symbol": h["symbol"],
+            "name": h["name"],
+            "price": cur_price,
+            "change_pct": r.get("change_pct", 0),
+            "buy_types": h["buy_types"],
+            "grade": h["grade"],
+            "score": h["score"],
+            "score_detail": h["score_detail"],
+            "detail": h["detail"],
+        })
+        if len(out) >= 60:
+            break
+    return jsonify(out)
 
 
 # ============================================================
