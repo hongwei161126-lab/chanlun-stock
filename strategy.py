@@ -11,26 +11,24 @@ import chanlun
 
 def detect_buy_points(analysis, params):
     """
-    在某级别的缠论解析结果上识别买点（严格版，依据缠论原著收紧条件）。
+    在某级别的缠论解析结果上识别买点（极严版）。
     返回 list[dict]，每个含 type, level, price, detail, strength
 
-    收紧原则（叠加缠论原著多课条件）：
+    收紧原则（叠加缠论原著多课条件 + 量价配合）：
       全局：
-        - 笔数≥5 + 笔幅度过滤(>2%)
-        - 买点时效性：最后笔在最近10根K线内（过期不推荐）
+        - 笔数≥5 + 笔幅度过滤(>3%) + 分型间隔≥7
+        - 买点时效性：最后笔在最近5根K线内（只推荐新鲜买点）
       一买（第17、24、26、29、67课）：
-        - 强背驰(面积比<0.6) + DIF/DEA在0轴下方 + DIF线底背离
-        - 至少2个下跌中枢且中枢逐步走低（走势终完美）
-        - 底分型确认（背驰后转折成立）
-        - 价在最后中枢下方
+        - 强背驰(面积比<0.5) + DIF/DEA在0轴下方 + DIF线底背离
+        - 至少3个下跌中枢且中枢逐步走低（走势终完美，大级别下跌）
+        - 底分型确认 + 最后一笔下跌幅度≥5%（非微小回调）
       二买（第20、21课）：
-        - 前序必须有一买确认（背驰转折后）
-        - 回调不破前低 + 回调幅度<上涨50%
-        - 回调低点不进入中枢内部（在中枢ZD上方或中枢上沿）
+        - 前序必须有一买确认 + 回调不破前低
+        - 回调幅度<上涨的38.2%（黄金分割，强势回调）
+        - 回调低点不进入中枢内部
       三买（第20课）：
-        - 中枢延伸不超过9笔（超9笔=级别升级，非本级别三买）
-        - 突破幅度>3% + 回试距ZG有2%空间
-        - 回试后必须有向上确认笔（转折确认）
+        - 中枢延伸不超过7笔 + 突破幅度>5% + 回试距ZG>3%
+        - 回试后必须有向上确认笔
     """
     results = []
     bi = analysis["bi"]
@@ -45,14 +43,14 @@ def detect_buy_points(analysis, params):
     if len(bi) < 5:
         return results
 
-    # 全局过滤：笔幅度过滤（过滤掉噪音笔，第67课）
-    bi = chanlun.filter_weak_bi(bi, min_pct=0.02)
+    # 全局过滤：笔幅度过滤（过滤掉噪音笔，第67课，收紧到3%）
+    bi = chanlun.filter_weak_bi(bi, min_pct=0.03)
     if len(bi) < 5:
         return results
 
-    # 买点时效性：最后笔的结束位置在最近10根合并K线内
+    # 买点时效性：最后笔的结束位置在最近5根合并K线内（只推荐新鲜买点）
     n_klines = len(klines)
-    max_lookback = 10
+    max_lookback = 5
     last_bi_end_idx = bi[-1]["end_index"] if bi else 0
     if n_klines > 0 and (n_klines - 1 - last_bi_end_idx) > max_lookback:
         return results  # 买点太久远，已过期
@@ -63,19 +61,18 @@ def detect_buy_points(analysis, params):
         div_ratio = div_detail["curr_area"] / div_detail["prev_area"]
 
     # ---- 第一类买点：下跌背驰转折 ----
-    # 严格条件：
-    #   强背驰(面积比<0.6) + 至少2个中枢 + 价在中枢下方
-    #   + 中枢逐步走低（下跌趋势确认）
-    #   + 底分型确认（转折成立，第67课）
-    if is_div and bi and div_ratio < 0.6:
+    # 极严条件：
+    #   强背驰(面积比<0.5) + 至少3个中枢 + 价在中枢下方
+    #   + 中枢逐步走低 + 底分型确认 + 最后一笔下跌幅度≥5%
+    if is_div and bi and div_ratio < 0.5:
         last_bi = bi[-1]
         if last_bi["direction"] == "down":
             below_zhongshu = True
             if zhongshu:
                 last_zs = zhongshu[-1]
                 below_zhongshu = last_bi["end_value"] < last_zs["ZD"]
-            # 至少2个中枢（走势终完美，下跌走势完成）
-            has_trend = len(zhongshu) >= 2
+            # 至少3个中枢（大级别下跌走势完成）
+            has_trend = len(zhongshu) >= 3
             # 中枢逐步走低（真正的下跌趋势，非震荡）
             zs_declining = True
             if len(zhongshu) >= 2:
@@ -83,20 +80,22 @@ def detect_buy_points(analysis, params):
                     if zhongshu[j]["ZD"] >= zhongshu[j-1]["ZD"]:
                         zs_declining = False
                         break
-            if below_zhongshu and has_trend and zs_declining:
+            # 最后一笔下跌幅度≥5%（非微小回调，是实质性下跌）
+            last_bi_pct = abs(last_bi["end_value"] - last_bi["start_value"]) / last_bi["start_value"] if last_bi["start_value"] > 0 else 0
+            if below_zhongshu and has_trend and zs_declining and last_bi_pct >= 0.05:
                 # 底分型确认（背驰后转折成立）
                 if bottom_confirmed:
                     results.append({
                         "type": "第一类买点",
                         "price": last_bi["end_value"],
-                        "detail": f"强背驰(力度比{div_ratio:.0%})+DIF底背离+{len(zhongshu)}中枢走低+底分型确认",
+                        "detail": f"强背驰(比{div_ratio:.0%})+DIF底背离+{len(zhongshu)}中枢走低+跌{last_bi_pct:.0%}+底分型确认",
                         "strength": _div_strength(div_detail),
                     })
 
     # ---- 第二类买点 ----
-    # 严格条件：
-    #   前序有一买确认（背驰转折后） + 回调不破前低 + 回调<上涨50%
-    #   + 回调低点不进入中枢内部（在中枢ZD上方）
+    # 极严条件：
+    #   前序有一买确认 + 回调不破前低 + 回调<上涨38.2%（黄金分割强势回调）
+    #   + 回调低点不进入中枢内部
     if bi and len(bi) >= 3 and zhongshu:
         last3 = bi[-3:]
         if (last3[0]["direction"] == "down" and last3[1]["direction"] == "up"
@@ -108,8 +107,8 @@ def detect_buy_points(analysis, params):
             if curr_low > prev_low:
                 up_range = up_high - prev_low
                 pullback = up_high - curr_low
-                # 回调幅度<上涨幅度的50%（回调不深，强势）
-                if up_range > 0 and pullback / up_range < 0.5:
+                # 回调幅度<上涨幅度的38.2%（黄金分割，强势回调）
+                if up_range > 0 and pullback / up_range < 0.382:
                     last_zs = zhongshu[-1]
                     # 回调低点不进入中枢内部（在ZD上方或ZD附近2%内）
                     if curr_low >= last_zs["ZD"] * 0.98:
@@ -119,21 +118,20 @@ def detect_buy_points(analysis, params):
                             results.append({
                                 "type": "第二类买点",
                                 "price": curr_low,
-                                "detail": f"背驰转折后回调{pullback/up_range*100:.0f}%不破前低，中枢ZD上方",
+                                "detail": f"背驰转折后回调{pullback/up_range*100:.0f}%不破前低(黄金分割)，中枢ZD上方",
                                 "strength": 2,
                             })
 
     # ---- 第三类买点 ----
-    # 严格条件：
-    #   中枢延伸不超过9笔（超9笔=级别升级，第22课）
-    #   突破幅度>3% + 回试距ZG有2%空间
-    #   回试后必须有向上确认笔（转折确认）
+    # 极严条件：
+    #   中枢延伸不超过7笔 + 突破幅度>5% + 回试距ZG>3%
+    #   回试后必须有向上确认笔
     if zhongshu and bi and len(bi) >= 2:
         last_zs = zhongshu[-1]
         ZG = last_zs["ZG"]
         zs_bi_count = len(last_zs.get("bi_list", []))
-        # 中枢至少3笔 + 不超过9笔（超9笔级别升级）
-        if 3 <= zs_bi_count <= 9:
+        # 中枢至少3笔 + 不超过7笔（超7笔级别升级）
+        if 3 <= zs_bi_count <= 7:
             last_up = bi[-2] if bi[-2]["direction"] == "up" else None
             last_down = bi[-1] if bi[-1]["direction"] == "down" else None
             if last_up and last_down:
@@ -142,7 +140,7 @@ def detect_buy_points(analysis, params):
                 if broke_up and not_break and ZG > 0:
                     breakout_pct = (last_up["end_value"] - ZG) / ZG * 100
                     margin_pct = (last_down["end_value"] - ZG) / ZG * 100
-                    if breakout_pct > 3 and margin_pct > 2:
+                    if breakout_pct > 5 and margin_pct > 3:
                         # 回试后必须有向上确认笔（当前最后一笔是向下=回试，
                         # 需要确认是否有随后的向上笔，或者当前价已回升）
                         confirmed = False

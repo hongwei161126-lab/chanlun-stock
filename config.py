@@ -27,8 +27,8 @@ SMALL_LEVEL = "30min"     # 小级别
 CHANLUN_PARAMS = {
     # K线包含处理：第n根与第n-1根比较时的合并规则
     "merge_kline": True,
-    # 笔的划分：最少独立K线数（分型间至少N根独立K线）
-    "min_klines_between_fractals": 5,
+    # 笔的划分：最少独立K线数（分型间至少N根独立K线，收紧到7）
+    "min_klines_between_fractals": 7,
     # 中枢：至少3笔重叠
     "min_zigzag_for_zhongshu": 3,
     # MACD背驰参数
